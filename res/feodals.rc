@@ -1,0 +1,4 @@
+// Resources: application icon and manifest (common controls v6 styles).
+// ASCII only, so windres and rc.exe read it the same way.
+1 ICON "feodals.ico"
+1 24 "feodals.manifest"
