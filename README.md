@@ -1,71 +1,73 @@
 # Feodals
 
-Покрокова гра на захоплення території для 2–8 гравців: на одному комп'ютері (hot-seat) або по мережі.
-Чистий C++ і Win32 API, без сторонніх бібліотек. Специфікація: [working_assets/feodals-spec.md](working_assets/feodals-spec.md).
+A turn-based territory capture game for 2–8 players, either hot-seat on one computer or over a network.
+Plain C++ and the Win32 API, no third-party libraries. The game UI is in Ukrainian.
+Specification (Ukrainian): [working_assets/feodals-spec.md](working_assets/feodals-spec.md).
 
-## Збірка
+## Building
 
-| Тулчейн | Команда | Результат |
+| Toolchain | Command | Output |
 |---|---|---|
-| MinGW g++ (32-біт) | `build_mingw.bat` | `build\Feodals.exe` (~100 КБ, Windows XP+) |
-| MSVC (32-біт) | `build_msvc.bat` | `build\Feodals_msvc.exe` (~146 КБ) |
-| Тести (MinGW) | `tests\build_tests.bat` | збирає й запускає `build\test_game.exe` (правила, збереження) і `build\test_net.exe` (мережа через 127.0.0.1) |
+| MinGW g++ (32-bit) | `build_mingw.bat` | `build\Feodals.exe` (~104 KB, Windows XP and later) |
+| MSVC (32-bit) | `build_msvc.bat` | `build\Feodals_msvc.exe` (~147 KB) |
+| Tests (MinGW) | `tests\build_tests.bat` | builds and runs `build\test_game.exe` (rules, saves) and `build\test_net.exe` (networking over 127.0.0.1) |
 
-`build_msvc.bat` сам знаходить Visual Studio через `vswhere`. Щоб отримати MSVC-збірку для XP, потрібен тулсет `v141_xp` і `/SUBSYSTEM:WINDOWS,5.01`: сучасні тулсети дають бінарник для Vista/7+.
+`build_msvc.bat` locates Visual Studio via `vswhere`. An MSVC build for Windows XP needs the `v141_xp` toolset and `/SUBSYSTEM:WINDOWS,5.01`; newer toolsets produce binaries for Vista/7 and later.
 
-Прапори збірки:
-- **GCC:** `-Os -fno-exceptions -fno-rtti -fno-asynchronous-unwind-tables -ffunction-sections -fdata-sections -Wl,--gc-sections -static -s` і потім `strip`.
-- **MSVC:** `/O1 /GS- /GR- /EHs-c- /MT /Gy /Gw` та `/OPT:REF /OPT:ICF /DEBUG:NONE`.
-- В обох: `_WIN32_WINNT=WINVER=0x0501` (Windows XP), Unicode.
+Build flags:
+- **GCC:** `-Os -fno-exceptions -fno-rtti -fno-asynchronous-unwind-tables -ffunction-sections -fdata-sections -Wl,--gc-sections -static -s`, followed by `strip`.
+- **MSVC:** `/O1 /GS- /GR- /EHs-c- /MT /Gy /Gw` with `/OPT:REF /OPT:ICF /DEBUG:NONE`.
+- Both: `_WIN32_WINNT=WINVER=0x0501` (Windows XP), Unicode.
 
-Від чого залежить exe: тільки системні DLL (`user32`, `gdi32`, `kernel32`, `comdlg32`, `comctl32`, `ws2_32`; MinGW-збірка ще й `msvcrt.dll`, яка є в кожній Windows).
+The executable depends only on system DLLs (`user32`, `gdi32`, `kernel32`, `comdlg32`, `comctl32`, `ws2_32`; the MinGW build also uses `msvcrt.dll`, which ships with every Windows).
 
-## Як грати
+## How to play
 
-- **ЛКМ** по нічиїй клітинці: зайняти її. Далі хід переходить до наступного гравця.
-- **Оточення:** якщо ваші клітинки замикають область (нічиї та/або чужі клітинки), уся вона стає вашою. Як у «Крапках» на папері, клітинки, що торкаються лише кутами, теж утворюють стіну. Територія всередині з'єднується лише сторонами клітинок. Край поля не рахується стіною.
-- Гра закінчується, коли зафарбовані всі клітинки.
-- Поле можна рухати **ПКМ/СКМ + тягнути**. Прокрутка: колесо, Shift+колесо, стрілки, PageUp/PageDown, Home/End.
-- Гарячі клавіші: Ctrl+N (нова гра), Ctrl+S (зберегти), Ctrl+Shift+S (зберегти як), Ctrl+O (завантажити), F1 (правила).
-- Збереження лежать у теці `saves\` поруч з exe, формат `.feo` описано в [src/SaveManager.h](src/SaveManager.h).
-- Нова гра з полем, більшим за вікно, починається з прокруткою посередині поля.
-- Чекбокс «Показувати останній хід» у бічній панелі обводить рамкою клітинку останнього ходу. Він діє лише на це вікно (у мережевій грі кожен вмикає його собі сам) і не зберігається разом із грою.
+- The program starts with a 30×30 game for two players. Start another one or load a save from the «Гра» (Game) menu.
+- **Left click** an unclaimed cell to claim it. The turn then passes to the next player.
+- **Encirclement:** when your cells close off an area (unclaimed and/or opponents' cells), the whole area becomes yours. As with dots on paper, cells touching only at corners also form a wall. Territory inside connects only through cell sides. The board edge is not a wall.
+- The game ends when every cell is claimed.
+- Pan the board by dragging with the **right or middle mouse button**. Scrolling: mouse wheel, Shift+wheel, arrow keys, PageUp/PageDown, Home/End.
+- Shortcuts: Ctrl+N (new game), Ctrl+S (save), Ctrl+Shift+S (save as), Ctrl+O (load), F1 (rules).
+- Saves go to the `saves\` folder next to the executable. The `.feo` format is described in [src/SaveManager.h](src/SaveManager.h).
+- A new game on a board larger than the window starts scrolled to the middle of the board.
+- The «Показувати останній хід» (show last move) checkbox in the side panel draws a frame around the cell of the last move. It only affects the current window (in a network game each player sets it for themselves) and is not saved with the game.
 
-## Мережева гра
+## Network game
 
-Кожен гравець грає на своєму комп'ютері. Поки що мається на увазі локальна мережа (адреси виду `192.168.x.y`). Через інтернет гра теж запрацює, якщо на роутері сервера прокинуто порт.
+Each player plays on their own computer. The main target is a local network (addresses like `192.168.x.y`). Playing over the internet also works if the host forwards the port on their router.
 
-- **Створити гру** (меню «Мережа → Створити мережеву гру…»): розмір поля, кількість гравців, порт (типово 5757), ваше ім'я і колір. Комп'ютер, що створив гру, стає сервером. Його IP-адреси показано в бічній панелі, їх треба передати іншим гравцям.
-- **Приєднатися** («Мережа → Приєднатися до гри…»): IP-адреса сервера і порт, далі ім'я та колір. Кольори, які вже зайняли інші, вибрати не можна.
-- Гра починається автоматично, щойно приєднаються всі гравці. Кожен ходить лише у свою чергу, а панель показує «Ваш хід!». Якщо вікно неактивне, воно блимає на панелі задач.
-- **Зберегти** мережеву гру може лише сервер, і робить це звичайним «Зберегти / Зберегти як…».
-- **Продовжити збережену гру по мережі** («Мережа → Створити мережеву гру зі збереження…») може будь-хто. Сервер обирає, за якого гравця грає. Ті, хто підключається, обирають серед решти збережених гравців. Змінити кольори не можна, а ім'я можна.
-- Якщо гравець від'єднався, гра стає на паузу. Він може підключитися знову й зайняти своє місце. Коли сервер завершує гру, у клієнтів лишається перегляд останнього стану.
-- Під час першого запуску сервера Windows може спитати дозвіл брандмауера для `Feodals.exe`. Без цього дозволу інші комп'ютери не зможуть підключитися.
+- **Host a game** («Мережа → Створити мережеву гру…», Network → Host a network game): board size, number of players, port (5757 by default), your name and color. The hosting computer becomes the server. Its IP addresses are shown in the side panel; share them with the other players.
+- **Join** («Мережа → Приєднатися до гри…», Network → Join a game): the server's IP address and port, then your name and color. Colors already taken by others cannot be chosen.
+- The game starts automatically once all players have joined. Everyone moves only on their own turn, and the panel shows «Ваш хід!» (your turn). An inactive window flashes in the taskbar.
+- Only the server can **save** a network game, using the regular Save / Save As.
+- Anyone can **continue a saved game over the network** («Мережа → Створити мережеву гру зі збереження…», Network → Host a network game from a save). The server picks which player to play. Joining players choose among the remaining saved players. Colors cannot be changed, names can.
+- If a player disconnects, the game pauses. They can reconnect and take their seat again. When the server stops the game, clients keep a view of the last state.
+- The first time a server starts, Windows may ask for a firewall permission for `Feodals.exe`. Without it other computers cannot connect.
 
-Як це влаштовано: TCP (IPv4, Winsock 2), події через `WSAAsyncSelect` у звичайному циклі повідомлень, без потоків. Усе працює на Windows XP. Рішення ухвалює сервер: він перевіряє кожен хід і розсилає прийняті. Клієнти повторюють хід тим самим `GameState` і звіряють лічильники клітинок. При розбіжності клієнт запитує повний знімок стану, який передається у форматі файлу збереження. Протокол описано на початку [src/NetGame.cpp](src/NetGame.cpp).
+How it works: TCP (IPv4, Winsock 2), events via `WSAAsyncSelect` in the regular message loop, no threads, works on Windows XP. The server is authoritative: it validates every move and broadcasts accepted ones. Clients replay each move through the same `GameState` and compare cell counters. On a mismatch a client requests a full state snapshot, which is sent in the save file format. The protocol is described at the top of [src/NetGame.cpp](src/NetGame.cpp).
 
-## Архітектура
+## Architecture
 
-| Файл | Роль |
+| File | Role |
 |---|---|
-| [src/GameState.*](src/GameState.h) | Поле, гравці, черга, хід, перевірка оточення. Без Win32 |
-| [src/Containers.h](src/Containers.h) | Sparse-хеш-мапа клітинок (`uint64` ключ → власник) і простий вектор, без STL |
-| [src/Renderer.*](src/Renderer.h) | GDI-рендер лише видимої частини з подвійною буферизацією |
-| [src/InputHandler.*](src/InputHandler.h) | Перетворює клік миші на `GameState::TryClaimCell` |
-| [src/SaveManager.*](src/SaveManager.h) | Бінарний формат (у файл і в пам'ять для мережі), діалоги відкриття/збереження, тека `saves\` |
-| [src/ByteBuffer.h](src/ByteBuffer.h) | Буфери little-endian для формату збереження і протоколу |
-| [src/NetGame.*](src/NetGame.h) | Мережева сесія: сервер/клієнт, лобі, передача ходів, пауза й повторне підключення |
-| [src/NetDialogs.*](src/NetDialogs.h), [src/DialogKit.*](src/DialogKit.h) | Діалоги підключення і вибору гравця, спільні елементи діалогів |
-| [src/NewGameDialog.*](src/NewGameDialog.h) | Діалог «Нова гра». Шаблон створюється в пам'яті, тому `.rc` для нього не потрібен |
-| [src/main.cpp](src/main.cpp) | `WinMain`, головне вікно, поле, бічна панель, меню |
+| [src/GameState.*](src/GameState.h) | Board, players, turn order, moves, encirclement check. No Win32 dependency |
+| [src/Containers.h](src/Containers.h) | Sparse hash map of cells (`uint64` key → owner) and a simple vector, no STL |
+| [src/Renderer.*](src/Renderer.h) | GDI rendering of the visible part of the board only, double-buffered |
+| [src/InputHandler.*](src/InputHandler.h) | Translates a mouse click into `GameState::TryClaimCell` |
+| [src/SaveManager.*](src/SaveManager.h) | Binary format (to file and to memory for networking), open/save dialogs, the `saves\` folder |
+| [src/ByteBuffer.h](src/ByteBuffer.h) | Little-endian buffers for the save format and the protocol |
+| [src/NetGame.*](src/NetGame.h) | Network session: server/client, lobby, move exchange, pause and reconnection |
+| [src/NetDialogs.*](src/NetDialogs.h), [src/DialogKit.*](src/DialogKit.h) | Connect and player-selection dialogs, shared dialog building blocks |
+| [src/NewGameDialog.*](src/NewGameDialog.h) | "New game" dialog. The template is built in memory, so no `.rc` is needed for it |
+| [src/main.cpp](src/main.cpp) | `WinMain`, main window, board, side panel, menu |
 
-### Перевірка оточення
+### Encirclement check
 
-Реалізує розділ 9.1 специфікації. Є кілька уточнень:
-1. **Швидкий відсів.** Стіни з'єднуються у 8 напрямках, територія — у 4. Спершу дивимося на сусідів нової клітинки по сторонах: чи з'єднані вони між собою через кільце з 8 сусідів. Якщо вони утворюють менш ніж дві групи, новий хід не може нічого відрізати, і flood-fill не запускається. На великих полях так проходить більшість ходів.
-2. **Паралельний flood-fill.** Групи обходяться по черзі (round-robin). Група, що вичерпалась і не дійшла до краю, захоплюється. Коли лишається одна необроблена група і жодна ще не виявилась відкритою, ця група точно зовнішня, тож обхід зупиняється. Тому закрити маленьку кишеню посеред гігантського поля коштує пропорційно розміру кишені.
-3. **Bounding box гравця.** Область, що виходить за межі прямокутника, у якому лежать клітинки гравця, точно відкрита.
-4. **Ліміт безпеки** `kFloodFillLimit = 100 000` клітинок діє на кожну область окремо. Більша область вважається відкритою.
+Implements section 9.1 of the specification, with a few refinements:
+1. **Quick rejection.** Walls connect in 8 directions, territory in 4. First, look at the side neighbours of the new cell and check whether they are connected to each other through the ring of 8 neighbours. If they form fewer than two groups, the move cannot cut anything off and no flood fill runs. Most moves on large boards take this path.
+2. **Parallel flood fill.** Groups are expanded in turns (round-robin). A group that is exhausted without reaching the edge is captured. When only one unresolved group is left and none has been found open yet, that group must be the outer one, so the search stops. Closing a small pocket in the middle of a huge board therefore costs in proportion to the pocket size.
+3. **Player bounding box.** An area that extends beyond the rectangle containing the player's cells is definitely open.
+4. **Safety limit** `kFloodFillLimit = 100 000` cells applies to each area separately. A larger area is treated as open.
 
-Заміри тестів: звичайні ходи та закриття кишені на полі 100 000×100 000 займають менше 1 мс. Штучний найгірший випадок (гравець розкиданий по всьому полю й закриває щілину в довгій стіні) — близько 100 мс.
+Test measurements: regular moves and closing a pocket on a 100 000×100 000 board take under 1 ms. An artificial worst case (a player spread across the whole board closing a gap in a long wall) takes about 100 ms.
