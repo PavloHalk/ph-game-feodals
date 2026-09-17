@@ -1193,11 +1193,11 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_NET_EVENT:
       OnNetEvent(wParam, lParam);
       return 0;
-    case WM_APP_START: {
-      NewGameSettings settings = g_app.settings;
-      if (ShowNewGameDialog(hwnd, &settings, false)) StartGame(settings);
+    case WM_APP_START:
+      // Default game (30 x 30, two players) once the window has its size;
+      // the player starts another one or loads a save from the menu.
+      StartGame(g_app.settings);
       return 0;
-    }
     case WM_CLOSE:
       if (ConfirmEndSession()) DestroyWindow(hwnd);
       return 0;

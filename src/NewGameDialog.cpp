@@ -365,8 +365,8 @@ INT_PTR CALLBACK DialogProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 void DefaultNewGameSettings(NewGameSettings* settings) {
   memset(settings, 0, sizeof(*settings));
-  settings->width = 20;
-  settings->height = 20;
+  settings->width = 30;
+  settings->height = 30;
   settings->numPlayers = 2;
   settings->port = kDefaultNetPort;
   for (int i = 0; i < kMaxPlayers; ++i) {
