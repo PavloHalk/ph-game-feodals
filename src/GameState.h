@@ -63,6 +63,17 @@ class GameState {
   bool IsGameOver() const { return width_ != 0 && filled_ == TotalCells(); }
   const CellMap& Cells() const { return cells_; }
 
+  // Cell clicked by the most recent accepted move of this session. Not part
+  // of the save format: a loaded game starts without one.
+  bool HasLastMove() const { return hasLastMove_; }
+  uint32_t LastMoveX() const { return lastMoveX_; }
+  uint32_t LastMoveY() const { return lastMoveY_; }
+  void SetLastMove(uint32_t x, uint32_t y) {
+    hasLastMove_ = x < width_ && y < height_;
+    lastMoveX_ = x;
+    lastMoveY_ = y;
+  }
+
   // Owner index or -1 for an unclaimed cell.
   int Owner(uint32_t x, uint32_t y) const {
     return cells_.Get(MakeCellKey(x, y));
@@ -87,6 +98,8 @@ class GameState {
   PlayerInfo players_[kMaxPlayers];
   uint64_t counts_[kMaxPlayers];
   uint64_t filled_;
+  bool hasLastMove_;
+  uint32_t lastMoveX_, lastMoveY_;
   // Bounding box of every cell each player ever owned (a superset of the
   // current cells). Anything outside it can reach the board edge freely.
   uint32_t boundsMinX_[kMaxPlayers], boundsMinY_[kMaxPlayers];

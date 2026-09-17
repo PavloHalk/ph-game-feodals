@@ -21,7 +21,8 @@ void ExtendBox(MoveResult* r, uint32_t x, uint32_t y) {
 }  // namespace
 
 GameState::GameState()
-    : width_(0), height_(0), numPlayers_(0), current_(0), filled_(0) {
+    : width_(0), height_(0), numPlayers_(0), current_(0), filled_(0),
+      hasLastMove_(false), lastMoveX_(0), lastMoveY_(0) {
   memset(players_, 0, sizeof(players_));
   memset(counts_, 0, sizeof(counts_));
   memset(boundsMinX_, 0xFF, sizeof(boundsMinX_));
@@ -43,6 +44,7 @@ bool GameState::Init(uint32_t width, uint32_t height, int numPlayers,
   numPlayers_ = numPlayers;
   current_ = 0;
   filled_ = 0;
+  hasLastMove_ = false;
   memset(players_, 0, sizeof(players_));
   memset(counts_, 0, sizeof(counts_));
   memset(boundsMinX_, 0xFF, sizeof(boundsMinX_));
@@ -71,6 +73,7 @@ MoveResult GameState::TryClaimCell(uint32_t x, uint32_t y) {
   AddToBounds(player, x, y);
 
   r.accepted = true;
+  SetLastMove(x, y);
   r.minX = r.maxX = x;
   r.minY = r.maxY = y;
   ResolveEncirclement(x, y, player, &r);
@@ -316,6 +319,9 @@ void GameState::Swap(GameState& other) {
   i = numPlayers_; numPlayers_ = other.numPlayers_; other.numPlayers_ = i;
   i = current_; current_ = other.current_; other.current_ = i;
   uint64_t f = filled_; filled_ = other.filled_; other.filled_ = f;
+  bool b = hasLastMove_; hasLastMove_ = other.hasLastMove_; other.hasLastMove_ = b;
+  u = lastMoveX_; lastMoveX_ = other.lastMoveX_; other.lastMoveX_ = u;
+  u = lastMoveY_; lastMoveY_ = other.lastMoveY_; other.lastMoveY_ = u;
   for (int p = 0; p < kMaxPlayers; ++p) {
     PlayerInfo info = players_[p];
     players_[p] = other.players_[p];

@@ -40,6 +40,11 @@ enum {
 
 const UINT WM_APP_START = WM_APP + 1;
 const int kPanelWidth = 240;
+const int kLastMoveCheckId = 3000;
+
+// Shown in "Про програму". Change only on request.
+const wchar_t kAppVersion[] = L"1.0.0";
+const wchar_t kAppAuthor[] = L"Павло Галковський";
 
 const wchar_t kMainClass[] = L"FeodalsMainWindow";
 const wchar_t kBoardClass[] = L"FeodalsBoard";
@@ -69,6 +74,9 @@ struct App {
   bool viewOnly;            // client whose network game has ended
   bool inJoinPrompt;
   wchar_t localAddresses[128];
+
+  HWND lastMoveCheck;  // per-window option, not saved with the game
+  bool showLastMove;
 };
 
 App g_app;
@@ -668,13 +676,30 @@ void ShowRules() {
       L"Правила гри", MB_OK | MB_ICONINFORMATION);
 }
 
+// Build date from __DATE__ ("Sep 17 2026") as "17.09.2026".
+void FormatBuildDate(wchar_t* out) {
+  static const char kMonths[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+  const char* date = __DATE__;
+  int month = 0;
+  for (int i = 0; i < 12; ++i) {
+    if (memcmp(date, kMonths + 3 * i, 3) == 0) month = i + 1;
+  }
+  int day = (date[4] == ' ' ? 0 : date[4] - '0') * 10 + (date[5] - '0');
+  wsprintfW(out, L"%02d.%02d.%hs", day, month, date + 7);
+}
+
 void ShowAbout() {
-  MessageBoxW(g_app.main,
-              L"Feodals 1.0\n\n"
-              L"Покрокова гра на захоплення території для 2–8 гравців на "
-              L"одному комп'ютері або по локальній мережі.\n"
-              L"C++ і чистий Win32 API, без сторонніх бібліотек.",
-              L"Про програму", MB_OK | MB_ICONINFORMATION);
+  wchar_t date[16], text[512];
+  FormatBuildDate(date);
+  wsprintfW(text,
+            L"Feodals %s\n"
+            L"Дата збірки: %s\n"
+            L"Автор: %s\n\n"
+            L"Покрокова гра на захоплення території для 2–8 гравців на "
+            L"одному комп'ютері або по локальній мережі.\n"
+            L"C++ і чистий Win32 API, без сторонніх бібліотек.",
+            kAppVersion, date, kAppAuthor);
+  MessageBoxW(g_app.main, text, L"Про програму", MB_OK | MB_ICONINFORMATION);
 }
 
 // ---- Board window -----------------------------------------------------------
@@ -718,7 +743,7 @@ LRESULT CALLBACK BoardProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       RECT rc;
       GetClientRect(hwnd, &rc);
       g_app.renderer.Paint(dc, rc.right, rc.bottom, g_app.game, g_app.scrollX,
-                           g_app.scrollY, g_app.hover);
+                           g_app.scrollY, g_app.hover, g_app.showLastMove);
       EndPaint(hwnd, &ps);
       return 0;
     }
@@ -1014,7 +1039,19 @@ void PaintPanel(HWND hwnd) {
       L"Колесо / Shift+колесо — прокрутка",
   };
   int hintsTop = h - 12 - 3 * 18;
-  if (hintsTop > y + 30) {
+  // The "last move" checkbox sits right above the hints; the hints give way
+  // first when the panel is too short.
+  bool showHints = hintsTop - 30 > y + 20;
+  int checkTop = showHints ? hintsTop - 30 : h - 32;
+  if (checkTop < y + 4) checkTop = y + 4;
+  RECT checkRect;
+  GetWindowRect(g_app.lastMoveCheck, &checkRect);
+  MapWindowPoints(0, hwnd, (POINT*)&checkRect, 2);
+  if (checkRect.top != checkTop || checkRect.right - checkRect.left != w - 26) {
+    SetWindowPos(g_app.lastMoveCheck, 0, 14, checkTop, w - 26, 22,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+  }
+  if (showHints) {
     SelectObject(dc, g_app.font);
     SetTextColor(dc, dim);
     for (int i = 0; i < 3; ++i) {
@@ -1040,6 +1077,18 @@ LRESULT CALLBACK PanelProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       return 1;
     case WM_SIZE:
       InvalidateRect(hwnd, 0, FALSE);
+      return 0;
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLORBTN:
+      SetBkMode((HDC)wParam, TRANSPARENT);
+      return (LRESULT)GetSysColorBrush(COLOR_BTNFACE);
+    case WM_COMMAND:
+      if (LOWORD(wParam) == kLastMoveCheckId && HIWORD(wParam) == BN_CLICKED) {
+        g_app.showLastMove =
+            SendMessageW(g_app.lastMoveCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+        InvalidateRect(g_app.board, 0, FALSE);
+        SetFocus(g_app.board);  // keep keyboard scrolling on the board
+      }
       return 0;
   }
   return DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -1084,8 +1133,14 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       g_app.board = CreateWindowExW(
           0, kBoardClass, L"", WS_CHILD | WS_VISIBLE | WS_HSCROLL | WS_VSCROLL,
           0, 0, 0, 0, hwnd, 0, g_app.instance, 0);
-      g_app.panel = CreateWindowExW(0, kPanelClass, L"", WS_CHILD | WS_VISIBLE,
-                                    0, 0, 0, 0, hwnd, 0, g_app.instance, 0);
+      g_app.panel = CreateWindowExW(0, kPanelClass, L"",
+                                    WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, 0,
+                                    0, 0, 0, hwnd, 0, g_app.instance, 0);
+      g_app.lastMoveCheck = CreateWindowExW(
+          0, L"BUTTON", L"Показувати останній хід",
+          WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, 14, 0, 200, 22,
+          g_app.panel, (HMENU)(INT_PTR)kLastMoveCheckId, g_app.instance, 0);
+      SendMessageW(g_app.lastMoveCheck, WM_SETFONT, (WPARAM)g_app.font, FALSE);
       return 0;
     case WM_SIZE: {
       int w = LOWORD(lParam), h = HIWORD(lParam);

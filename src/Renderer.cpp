@@ -72,7 +72,8 @@ HBRUSH Renderer::PlayerBrush(const GameState& game, int player) {
 }
 
 void Renderer::Paint(HDC target, int width, int height, const GameState& game,
-                     int scrollX, int scrollY, const HoverCell& hover) {
+                     int scrollX, int scrollY, const HoverCell& hover,
+                     bool markLastMove) {
   if (width <= 0 || height <= 0) return;
   if (!EnsureBuffer(target, width, height)) return;
   HDC dc = memDC_;
@@ -134,6 +135,25 @@ void Renderer::Paint(HDC target, int width, int height, const GameState& game,
                      (int)(hover.y + 1) * kCellSize - scrollY};
         FillRect(dc, &cell, tint);
         DeleteObject(tint);
+      }
+
+      if (markLastMove && game.HasLastMove()) {
+        uint32_t lx = game.LastMoveX(), ly = game.LastMoveY();
+        // Visible (with a cell of margin, the frame reaches over the grid).
+        if (lx + 1 >= x0 && lx <= x1 + 1 && ly + 1 >= y0 && ly <= y1 + 1) {
+          int left = (int)lx * kCellSize - scrollX;
+          int top = (int)ly * kCellSize - scrollY;
+          // 2 px black ring over the grid lines, 1 px white ring inside it:
+          // stands out on light and dark player colors alike.
+          RECT ring = {left - 1, top - 1, left + kCellSize + 2,
+                       top + kCellSize + 2};
+          HBRUSH black = (HBRUSH)GetStockObject(BLACK_BRUSH);
+          FrameRect(dc, &ring, black);
+          InflateRect(&ring, -1, -1);
+          FrameRect(dc, &ring, black);
+          InflateRect(&ring, -1, -1);
+          FrameRect(dc, &ring, (HBRUSH)GetStockObject(WHITE_BRUSH));
+        }
       }
     }
   }

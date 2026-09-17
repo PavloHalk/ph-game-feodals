@@ -64,6 +64,17 @@ static void TestBasicMove() {
   CHECK(g.CurrentPlayer() == 2);
   CHECK(g.TryClaimCell(0, 0).accepted);
   CHECK(g.CurrentPlayer() == 0);
+
+  // The last accepted move is remembered; rejected clicks do not change it.
+  CHECK(g.HasLastMove() && g.LastMoveX() == 0 && g.LastMoveY() == 0);
+  CHECK(!g.TryClaimCell(9, 9).accepted);
+  CHECK(g.LastMoveX() == 0 && g.LastMoveY() == 0);
+  GameState other;
+  CHECK(!other.HasLastMove());
+  other.Swap(g);
+  CHECK(other.HasLastMove() && !g.HasLastMove());
+  InitGame(&other, 10, 10, 2);
+  CHECK(!other.HasLastMove());
 }
 
 static void TestSpecExample() {

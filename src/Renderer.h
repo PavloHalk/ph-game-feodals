@@ -29,9 +29,11 @@ class Renderer {
 
   // Draws the part of the board visible through a client area of the given
   // size scrolled to (scrollX, scrollY). Cost depends on the window size
-  // only, never on the board size.
+  // only, never on the board size. With `markLastMove` the cell of the last
+  // move gets a contrasting frame.
   void Paint(HDC target, int width, int height, const GameState& game,
-             int scrollX, int scrollY, const HoverCell& hover);
+             int scrollX, int scrollY, const HoverCell& hover,
+             bool markLastMove);
 
  private:
   Renderer(const Renderer&);

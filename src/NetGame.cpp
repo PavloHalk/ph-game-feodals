@@ -756,8 +756,14 @@ bool NetGame::ClientLobby(ByteReader* in) {
 bool NetGame::ClientState(ByteReader* in) {
   int reason = (int)in->U8();
   if (!in->Ok()) return false;
+  bool hadLastMove = game_->HasLastMove();
+  uint32_t lastX = game_->LastMoveX(), lastY = game_->LastMoveY();
   if (DeserializeGame(in->Current(), in->Remaining(), game_) != kSaveOk) {
     return false;
+  }
+  // Snapshots do not carry the last move; keep ours across a resync.
+  if (reason == kStateSync && hadLastMove && game_->Owner(lastX, lastY) >= 0) {
+    game_->SetLastMove(lastX, lastY);
   }
   bool first = !receivedState_;
   receivedState_ = true;
