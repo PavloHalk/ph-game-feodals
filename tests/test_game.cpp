@@ -609,7 +609,7 @@ static uint64_t BestCapture(const GameState& g, int player) {
 // Medium must find the best capture, and when threatened, a move after which
 // the opponent's best capture is as small as possible (checked against a
 // brute force over every free cell).
-static void TestBlocksAndCaptures(int level, const char* name) {
+static void TestBlocksAndCaptures(int level, const char* name, int seeds) {
   const char* pic[] = {"000", "01.", "000", "....", ".11."};
   GameState base;
   InitBots(&base, 20, 20, kBotHuman, level);
@@ -641,7 +641,7 @@ static void TestBlocksAndCaptures(int level, const char* name) {
   CHECK(bestGain > 0);
 
   int defended = 0, captured = 0;
-  for (int seed = 1; seed <= 30; ++seed) {
+  for (int seed = 1; seed <= seeds; ++seed) {
     Bot bot(seed);
     uint32_t x, y;
     base.SetCurrentPlayer(1);
@@ -652,9 +652,9 @@ static void TestBlocksAndCaptures(int level, const char* name) {
     uint64_t gain = attack.EvaluateClaim(x, y, 0, &others);
     if (gain + others == bestGain) ++captured;
   }
-  printf("  %s bot: best defence %d/30, best capture %d/30\n", name,
-         defended, captured);
-  CHECK(defended >= 27 && captured >= 27);
+  printf("  %s bot: best defence %d/%d, best capture %d/%d\n", name,
+         defended, seeds, captured, seeds);
+  CHECK(defended * 10 >= seeds * 9 && captured * 10 >= seeds * 9);
 }
 
 static void TestMediumStrength() {
@@ -707,6 +707,46 @@ static void TestStrongStrength() {
   CHECK(big < 3000);
 }
 
+// Very strong thinks for seconds, so only a short sanity match here; the
+// strength was measured separately (18 of 20 games won against strong on
+// 14x14).
+static void TestVeryStrong() {
+  DWORD slowest = 0;
+  LARGE_INTEGER t0 = Now();
+  int wins = 0;
+  for (int game = 0; game < 2; ++game) {
+    bool first = game == 0;
+    int winner = PlayMatch(10, first ? kBotVeryStrong : kBotStrong,
+                           first ? kBotStrong : kBotVeryStrong, 900 + game,
+                           &slowest);
+    CHECK(winner != -2);
+    if (winner == (first ? 0 : 1)) ++wins;
+  }
+  printf("  very strong vs strong on 10x10: %d/2 won; slowest move %lu ms, "
+         "total %lu ms\n",
+         wins, (unsigned long)slowest, (unsigned long)Ms(t0, Now()));
+  CHECK(slowest < 9000);
+
+  // A cancel request stops the search at once, with a legal move.
+  GameState g;
+  InitBots(&g, 14, 14, kBotVeryStrong, kBotStrong);
+  Bot helper(3);
+  for (int i = 0; i < 20; ++i) {
+    uint32_t x, y;
+    helper.ChooseMove(g, &x, &y);
+    g.TryClaimCell(x, y);
+  }
+  volatile long generation = 2;
+  Bot bot(4);
+  bot.SetCancel(&generation, 1);  // already outdated: stop immediately
+  uint32_t x, y;
+  t0 = Now();
+  CHECK(bot.ChooseMove(g, &x, &y) && g.Owner(x, y) < 0);
+  DWORD cancelled = Ms(t0, Now());
+  printf("  cancelled very strong move: %lu ms\n", (unsigned long)cancelled);
+  CHECK(cancelled < 1000);
+}
+
 static void TestMediumOnBigBoards() {
   DWORD slowest = 0;
   CHECK(PlayMatch(40, kBotMedium, kBotMedium, 9, &slowest) != -2);
@@ -748,11 +788,13 @@ int main() {
   TestBotTakesCaptures();
   TestBotBeatsRandomPlayer();
   TestBotOnHugeBoard();
-  TestBlocksAndCaptures(kBotMedium, "medium");
-  TestBlocksAndCaptures(kBotStrong, "strong");
+  TestBlocksAndCaptures(kBotMedium, "medium", 30);
+  TestBlocksAndCaptures(kBotStrong, "strong", 30);
+  TestBlocksAndCaptures(kBotVeryStrong, "very strong", 5);
   TestMediumStrength();
   TestMediumOnBigBoards();
   TestStrongStrength();
+  TestVeryStrong();
   printf("%d checks, %d failures\n", g_checks, g_failures);
   return g_failures ? 1 : 0;
 }

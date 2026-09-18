@@ -3,6 +3,8 @@
 #include <windows.h>
 #include <commctrl.h>
 
+#include <new>
+
 #include "Bot.h"
 #include "GameState.h"
 #include "InputHandler.h"
@@ -44,6 +46,7 @@ const int kPanelWidth = 240;
 const int kLastMoveCheckId = 3000;
 const UINT_PTR kBotTimerId = 1;
 const UINT kBotDelayMs = 400;  // lets people see the computer's move
+const UINT WM_APP_BOT_MOVE = WM_APP + 30;  // lParam: finished BotJob*
 
 // Shown in "Про програму". Change only on request.
 const wchar_t kAppVersion[] = L"1.0.0";
@@ -82,9 +85,43 @@ struct App {
   bool showLastMove;
 
   Bot bot;
+  bool botThinking;  // a BotJob for the current position is running
 };
 
 App g_app;
+
+// The computer thinks on a worker thread (the very strong level takes
+// seconds). A job owns a copy of the game and its own Bot, so nothing is
+// shared with the window thread except g_botGeneration: bumping it makes
+// every running job stop and its result be ignored.
+struct BotJob {
+  GameState game;
+  Bot bot;
+  long generation;
+  int player;
+  uint64_t filled;
+  bool ok;
+  uint32_t x, y;
+  HWND window;
+};
+
+volatile long g_botGeneration = 0;
+
+DWORD WINAPI BotThread(LPVOID param) {
+  BotJob* job = (BotJob*)param;
+  job->ok = job->bot.ChooseMove(job->game, &job->x, &job->y);
+  if (!PostMessageW(job->window, WM_APP_BOT_MOVE, 0, (LPARAM)job)) {
+    job->~BotJob();  // the window is gone
+    free(job);
+  }
+  return 0;
+}
+
+// Stops a computer move in progress (the game is being replaced).
+void CancelBot() {
+  InterlockedIncrement(&g_botGeneration);
+  g_app.botThinking = false;
+}
 
 // ---- Helpers --------------------------------------------------------------
 
@@ -111,6 +148,8 @@ void UpdateTitle() {
 }
 
 // Whether a click on the board may make a move right now.
+void StartBotJob();
+
 // Local game where the current player is a computer (never in network games).
 bool IsBotTurn() {
   const GameState& g = g_app.game;
@@ -295,6 +334,7 @@ void ResetView(bool center) {
 }
 
 bool StartGame(const NewGameSettings& settings) {
+  CancelBot();
   if (!g_app.game.Init(settings.width, settings.height, settings.numPlayers,
                        settings.players)) {
     return false;
@@ -379,6 +419,7 @@ void NewGame() {
 }
 
 void AfterGameLoaded(const wchar_t* path) {
+  CancelBot();
   const GameState& g = g_app.game;
   g_app.settings.width = g.Width();
   g_app.settings.height = g.Height();
@@ -397,10 +438,12 @@ void LoadFromFile() {
   if (!ConfirmEndSession()) return;
   wchar_t path[MAX_PATH];
   if (!PromptLoadPath(g_app.main, path)) return;
+  CancelBot();
   SaveResult result = LoadGame(path, &g_app.game);
   if (result != kSaveOk) {
     MessageBoxW(g_app.main, SaveResultText(result), L"Помилка завантаження",
                 MB_OK | MB_ICONERROR);
+    ScheduleBot();  // the old game goes on
     return;
   }
   AfterGameLoaded(path);
@@ -437,6 +480,7 @@ void HostNetworkGame() {
   if (!ConfirmEndSession()) return;
   NewGameSettings settings = g_app.settings;
   if (!ShowNewGameDialog(g_app.main, &settings, true)) return;
+  CancelBot();
   int error = g_app.net.HostNewGame(&g_app.game, settings.port, settings.width,
                                     settings.height, settings.numPlayers,
                                     settings.players[0]);
@@ -487,6 +531,7 @@ void HostSavedNetworkGame() {
   req.player = loaded.Player(0);
   if (!ShowPlayerSetupDialog(g_app.main, &req)) return;
 
+  CancelBot();
   g_app.game.Swap(loaded);
   int error = g_app.net.HostSavedGame(&g_app.game, req.port, req.slot,
                                       req.player.name);
@@ -504,9 +549,11 @@ void HostSavedNetworkGame() {
 void JoinNetworkGame() {
   if (!ConfirmEndSession()) return;
   if (!ShowConnectDialog(g_app.main, &g_app.connect)) return;
+  CancelBot();
   int error =
       g_app.net.Connect(&g_app.game, g_app.connect.address, g_app.connect.port);
   if (error) {
+    ScheduleBot();  // the local game goes on
     ShowNetError(L"Не вдалося підключитися", error);
     return;
   }
@@ -764,23 +811,62 @@ void OnBoardClick(int x, int y) {
   AfterLocalMove(r);
 }
 
-// A computer player's turn in a local game.
+// A computer player's turn in a local game: starts the thinking.
 void OnBotTimer() {
   KillTimer(g_app.main, kBotTimerId);
-  if (!IsBotTurn()) return;
+  if (!IsBotTurn() || g_app.botThinking) return;
   if (!IsWindowEnabled(g_app.main)) {  // a dialog is open: wait for it
     ScheduleBot();
     return;
   }
-  uint32_t x, y;
-  if (!g_app.bot.ChooseMove(g_app.game, &x, &y)) return;
-  MoveResult r = g_app.game.TryClaimCell(x, y);
-  if (!r.accepted) {
-    ScheduleBot();
+  StartBotJob();
+}
+
+void StartBotJob() {
+  BotJob* job = (BotJob*)malloc(sizeof(BotJob));
+  if (!job) return;
+  new (job) BotJob;
+  if (!job->game.CopyFrom(g_app.game)) {
+    job->~BotJob();
+    free(job);
     return;
   }
-  g_app.hover.valid = false;
-  AfterLocalMove(r);
+  job->bot.Seed(GetTickCount() * 2654435761u + (uint32_t)g_app.game.FilledCells());
+  job->generation = InterlockedIncrement(&g_botGeneration);
+  job->bot.SetCancel(&g_botGeneration, job->generation);
+  job->player = g_app.game.CurrentPlayer();
+  job->filled = g_app.game.FilledCells();
+  job->ok = false;
+  job->window = g_app.main;
+  g_app.botThinking = true;
+  DWORD id;
+  HANDLE thread = CreateThread(0, 0, BotThread, job, 0, &id);
+  if (thread) {
+    CloseHandle(thread);
+  } else {  // no thread: think right here
+    BotThread(job);
+  }
+}
+
+// A worker finished: plays its move if the position is still the same.
+void OnBotMove(BotJob* job) {
+  bool current = job->generation == g_botGeneration;
+  if (current) g_app.botThinking = false;
+  if (current && job->ok && IsBotTurn() &&
+      g_app.game.CurrentPlayer() == job->player &&
+      g_app.game.FilledCells() == job->filled) {
+    MoveResult r = g_app.game.TryClaimCell(job->x, job->y);
+    if (r.accepted) {
+      g_app.hover.valid = false;
+      AfterLocalMove(r);
+    } else {
+      ScheduleBot();
+    }
+  } else if (current) {
+    ScheduleBot();
+  }
+  job->~BotJob();
+  free(job);
 }
 
 LRESULT CALLBACK BoardProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -1249,6 +1335,9 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_TIMER:
       if (wParam == kBotTimerId) OnBotTimer();
       return 0;
+    case WM_APP_BOT_MOVE:
+      OnBotMove((BotJob*)lParam);
+      return 0;
     case WM_APP_START:
       // Default game (30 x 30, two players) once the window has its size;
       // the player starts another one or loads a save from the menu.
@@ -1258,6 +1347,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       if (ConfirmEndSession()) DestroyWindow(hwnd);
       return 0;
     case WM_DESTROY:
+      CancelBot();
       PostQuitMessage(0);
       return 0;
   }

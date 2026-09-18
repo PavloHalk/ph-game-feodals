@@ -1,5 +1,7 @@
 #include "Bot.h"
 
+#include <time.h>
+
 namespace {
 
 // Neighbourhood used to pick candidate cells around claimed ones.
@@ -46,7 +48,8 @@ int Clamp(uint64_t v, int limit) { return v > (uint64_t)limit ? limit : (int)v; 
 
 }  // namespace
 
-Bot::Bot(uint32_t seed) : state_(seed ? seed : 0x9E3779B9u) {}
+Bot::Bot(uint32_t seed)
+    : state_(seed ? seed : 0x9E3779B9u), cancelFlag_(0), cancelValue_(0) {}
 
 uint32_t Bot::Random() {
   // xorshift32
@@ -65,8 +68,10 @@ bool Bot::ChooseMove(const GameState& game, uint32_t* x, uint32_t* y) {
       return ChooseWeak(game, x, y);
     case kBotMedium:
       return ChooseMedium(game, x, y);
-    default:  // very strong is not written yet: it plays like strong
+    case kBotStrong:
       return ChooseStrong(game, x, y);
+    default:
+      return ChooseVeryStrong(game, x, y);
   }
 }
 
@@ -117,7 +122,7 @@ void Bot::AddAround(const GameState& game, uint32_t cx, uint32_t cy,
       uint64_t key = MakeCellKey((uint32_t)nx, (uint32_t)ny);
       if (game.Cells().Get(key) >= 0 || seen->Get(key) >= 0) continue;
       if (out->Size() >= kMaxCandidates || seen->Set(key, 1) == -2) return;
-      Candidate c = {(uint32_t)nx, (uint32_t)ny, 0};
+      Candidate c = {(uint32_t)nx, (uint32_t)ny, 0, 0};
       out->Push(c);
     }
   }
@@ -394,38 +399,58 @@ bool Bot::ChooseMedium(const GameState& game, uint32_t* x, uint32_t* y) {
   return true;
 }
 
-// ---- Strong -----------------------------------------------------------------
+// ---- Strong and very strong -------------------------------------------------
 
 namespace {
 
-const int kStrongDepth = 4;            // plies: me, reply, me, reply
-const int kStrongRootBeam = 12;        // moves tried at the root
-const int kStrongInnerBeam = 6;        // moves tried at deeper nodes
-const int kStrongNodeBudget = 4000;    // positions played out per move
-const int kStrongPool = 48;            // root candidates reused in the search
-const size_t kMaxStrongCells = 5000;   // above: too slow, plays like medium
 const int kWin = 1000000;
 const int kInfinity = 2000000000;
-const int kMaxPath = 8;
+const int kMaxPath = 24;
+const int kMaxBeam = 32;
+const int kMaxPool = 64;
+const size_t kMaxSearchCells = 5000;  // above: too slow, plays like medium
 
 // Evaluation weights (per cell).
 const int kCellValue = 10;       // a cell owned now
 const int kPendingValue = 8;     // capture the player to move will make
 const int kThreatValue = 3;      // each capturing cell (forks count double)
-// An empty cell closer to us than to others, as a divisor: that many such
-// cells are worth one point (a cell owned now is worth kCellValue points).
-// (Chosen by 40-game matches against medium: none 31, 1/4 34, 1/8 36,
-// 1/16 34 wins.)
-const int kInfluenceDivisor = 8;
 const int kInfluenceMargin = 3;  // cells around the action taken into account
 const uint64_t kInfluenceMaxArea = 4096;
+
+// How deep and how wide a level searches.
+struct SearchParams {
+  int startDepth;        // plies of the first iteration
+  int maxDepth;          // deepest iteration; each one adds 2 plies
+  int rootBeam;          // moves tried at the root
+  int innerBeam;         // moves tried right below the root...
+  int minBeam;           // ...narrowing by one per ply down to this
+  int budget;            // positions played out per move (all iterations)
+  int pool;              // root candidates reused deeper in the search
+  int quiescence;        // extra plies of captures only, at the leaves
+  // An empty cell closer to us than to others: that many such cells are
+  // worth one point (a cell owned now is worth kCellValue points). Strong
+  // uses 8, chosen by 40-game matches against medium: none 31, 1/4 34,
+  // 1/8 36, 1/16 34 wins.
+  int influenceDivisor;
+  int timeLimitMs;       // later iterations stop after this (0: no limit)
+};
+
+const SearchParams kStrongParams = {4, 4, 12, 6, 6, 4000, 48, 0, 8, 0};
+// Very strong: iterations of 4, 6 and 8 plies, 16 root moves, 8 below the
+// root narrowing to 4, 60000 positions, captures followed 4 plies further.
+// Against strong it won 18 of 20 games on 14x14 (by 28 cells on average)
+// and 6 of 8 on 20x20 (1 draw); on 30x30 a move takes ~2 s, rarely over 6 s.
+const SearchParams kVeryStrongParams = {4, 8, 16, 8, 4, 60000, 64, 4, 8, 8000};
 
 }  // namespace
 
 struct Bot::SearchContext {
+  SearchParams params;
   int me;
   int nodes;
-  int budget;
+  bool firstIteration;  // runs to the end even past the budget (as leaves)
+  bool aborted;         // budget, time or cancel hit in a later iteration
+  clock_t deadline;     // 0: none
   PodVec<uint64_t> pool;  // root candidates, still relevant deeper down
   uint64_t path[kMaxPath];
   int pathLen;
@@ -541,6 +566,10 @@ int ClampScore(int64_t v) {
 
 }  // namespace
 
+bool Bot::Cancelled() const {
+  return cancelFlag_ && *cancelFlag_ != cancelValue_;
+}
+
 // Candidates of a node: the root pool plus the area around the moves played
 // in the search so far. Captures and blocks are checked on these cells only,
 // which keeps a node cheap; threats elsewhere were already in the pool.
@@ -556,7 +585,7 @@ int Bot::OrderMoves(const GameState& s, SearchContext* ctx, Candidate* out,
     uint64_t key = ctx->pool[i];
     if (s.Cells().Get(key) >= 0 || seen.Get(key) >= 0) continue;
     seen.Set(key, 1);
-    Candidate c = {CellKeyX(key), CellKeyY(key), 0};
+    Candidate c = {CellKeyX(key), CellKeyY(key), 0, 0};
     cands.Push(c);
   }
   for (int i = 0; i < ctx->pathLen; ++i) {
@@ -574,6 +603,7 @@ int Bot::OrderMoves(const GameState& s, SearchContext* ctx, Candidate* out,
       uint64_t captured = s.EvaluateClaim(c.x, c.y, mover, &others);
       if (captured) {
         int gain = Clamp(captured + others, 100000);
+        c.gain = gain;
         score += kGainWeight * gain;
         ++stats->moverThreats;
         if (gain > stats->moverBest) stats->moverBest = gain;
@@ -596,12 +626,12 @@ int Bot::OrderMoves(const GameState& s, SearchContext* ctx, Candidate* out,
 }
 
 // Static value of a position for ctx.me: cells, the capture the player to
-// move is about to make, and the balance of capture threats (two or more
-// threats against one reply is a fork).
+// move is about to make, the balance of capture threats (two or more
+// threats against one reply is a fork) and the territory estimate.
 int Bot::Evaluate(const GameState& s, const SearchContext& ctx,
                   const NodeStats& stats) {
   int64_t v = kCellValue * Material(s, ctx.me) +
-              Influence(s, ctx.me) / kInfluenceDivisor;
+              Influence(s, ctx.me) / ctx.params.influenceDivisor;
   int mover = s.CurrentPlayer();
   int next = (mover + 1) % s.NumPlayers();
   if (mover == ctx.me) {
@@ -618,31 +648,68 @@ int Bot::Evaluate(const GameState& s, const SearchContext& ctx,
   return ClampScore(v);
 }
 
-int Bot::Search(const GameState& s, int depth, int alpha, int beta,
+// Paranoid alpha-beta: ctx.me maximizes, every other player minimizes.
+// `ply` is the distance from the root; below depth 0 only captures are
+// searched (quiescence) so that leaves are not judged in the middle of an
+// exchange.
+int Bot::Search(const GameState& s, int depth, int ply, int alpha, int beta,
                 SearchContext* ctx) {
+  if (ctx->aborted) return 0;
   if (s.IsGameOver()) {
     int64_t diff = Material(s, ctx->me);
     if (diff > 0) return kWin + ClampScore(diff);
     if (diff < 0) return -kWin + ClampScore(diff);
     return 0;
   }
+  if ((ctx->nodes & 63) == 0) {
+    if (Cancelled() || (!ctx->firstIteration && ctx->deadline &&
+                        clock() > ctx->deadline)) {
+      ctx->aborted = true;
+      return 0;
+    }
+  }
+  bool overBudget = ctx->nodes >= ctx->params.budget;
+  if (overBudget && !ctx->firstIteration) {
+    ctx->aborted = true;
+    return 0;
+  }
+
+  const SearchParams& p = ctx->params;
+  bool quiet = depth <= 0;
+  int beam = p.innerBeam - (ply - 1);
+  if (beam < p.minBeam) beam = p.minBeam;
+  if (beam > kMaxBeam) beam = kMaxBeam;
+  if (quiet) beam = 3;  // captures come first in the ordering
+
   NodeStats stats;
-  Candidate moves[kStrongInnerBeam];
-  bool leaf = depth <= 0 || ctx->nodes >= ctx->budget;
-  int n = OrderMoves(s, ctx, moves, leaf ? 0 : kStrongInnerBeam, &stats);
+  Candidate moves[kMaxBeam];
+  bool leaf = overBudget || (quiet && (depth <= -p.quiescence));
+  int n = OrderMoves(s, ctx, moves, leaf ? 0 : beam, &stats);
   if (leaf || !n) return Evaluate(s, *ctx, stats);
 
   bool maximize = s.CurrentPlayer() == ctx->me;
   int best = maximize ? -kInfinity : kInfinity;
+  if (quiet) {
+    // Stand pat: the side to move need not capture.
+    int standPat = Evaluate(s, *ctx, stats);
+    if (!stats.moverBest) return standPat;
+    best = standPat;
+    if (maximize ? best >= beta : best <= alpha) return best;
+    if (maximize && best > alpha) alpha = best;
+    if (!maximize && best < beta) beta = best;
+  }
+
   GameState child;
   for (int i = 0; i < n; ++i) {
+    if (quiet && !moves[i].gain) continue;
     if (!child.CopyFrom(s)) break;
     if (!child.TryClaimCell(moves[i].x, moves[i].y).accepted) continue;
     ++ctx->nodes;
     bool pushed = ctx->pathLen < kMaxPath;
     if (pushed) ctx->path[ctx->pathLen++] = MakeCellKey(moves[i].x, moves[i].y);
-    int v = Search(child, depth - 1, alpha, beta, ctx);
+    int v = Search(child, depth - 1, ply + 1, alpha, beta, ctx);
     if (pushed) --ctx->pathLen;
+    if (ctx->aborted) return 0;
     if (maximize) {
       if (v > best) best = v;
       if (best > alpha) alpha = best;
@@ -657,42 +724,82 @@ int Bot::Search(const GameState& s, int depth, int alpha, int beta,
 }
 
 bool Bot::ChooseStrong(const GameState& game, uint32_t* x, uint32_t* y) {
+  return ChooseBySearch(game, x, y, &kStrongParams);
+}
+
+bool Bot::ChooseVeryStrong(const GameState& game, uint32_t* x, uint32_t* y) {
+  return ChooseBySearch(game, x, y, &kVeryStrongParams);
+}
+
+// Iterative deepening: every iteration searches 2 plies deeper and tries the
+// best move of the previous one first. The first iteration always finishes
+// (positions past the budget become leaves); a later one stops at the
+// budget, and its best move still counts if it beat the previous best.
+bool Bot::ChooseBySearch(const GameState& game, uint32_t* x, uint32_t* y,
+                         const void* paramsPtr) {
+  const SearchParams& params = *(const SearchParams*)paramsPtr;
   if (!game.Cells().Count()) return Opening(game, x, y);
-  if (game.Cells().Count() > kMaxStrongCells) return ChooseMedium(game, x, y);
+  if (game.Cells().Count() > kMaxSearchCells) return ChooseMedium(game, x, y);
 
   PodVec<Candidate> candidates;
   GatherCandidates(game, &candidates);
   if (!candidates.Size()) return AnyFreeCell(game, x, y);
 
-  Candidate pool[kStrongPool];
-  int poolSize = RankOnePly(game, candidates, pool, kStrongPool);
+  Candidate pool[kMaxPool];
+  int poolLimit = params.pool < kMaxPool ? params.pool : kMaxPool;
+  int poolSize = RankOnePly(game, candidates, pool, poolLimit);
 
   SearchContext ctx;
+  ctx.params = params;
   ctx.me = game.CurrentPlayer();
   ctx.nodes = 0;
-  ctx.budget = kStrongNodeBudget;
+  ctx.aborted = false;
+  ctx.deadline = params.timeLimitMs
+                     ? clock() + (clock_t)params.timeLimitMs * CLOCKS_PER_SEC / 1000
+                     : 0;
   ctx.pathLen = 0;
   for (int i = 0; i < poolSize; ++i) {
     ctx.pool.Push(MakeCellKey(pool[i].x, pool[i].y));
   }
 
-  int rootMoves = poolSize < kStrongRootBeam ? poolSize : kStrongRootBeam;
-  int alpha = -kInfinity;
-  int bestIndex = 0, bestValue = -kInfinity;
+  int rootMoves = poolSize < params.rootBeam ? poolSize : params.rootBeam;
+  int order[kMaxPool];
+  for (int i = 0; i < rootMoves; ++i) order[i] = i;
+  int bestIndex = 0;
+
+  uint64_t freeCells = game.TotalCells() - game.FilledCells();
   GameState child;
-  for (int i = 0; i < rootMoves; ++i) {
-    if (!child.CopyFrom(game)) break;
-    if (!child.TryClaimCell(pool[i].x, pool[i].y).accepted) continue;
-    ++ctx.nodes;
-    ctx.path[0] = MakeCellKey(pool[i].x, pool[i].y);
-    ctx.pathLen = 1;
-    int v = Search(child, kStrongDepth - 1, alpha, kInfinity, &ctx);
-    // Equal values: keep some variety between games.
-    if (v > bestValue || (v == bestValue && Random(2))) {
-      bestValue = v;
-      bestIndex = i;
+  for (int depth = params.startDepth; depth <= params.maxDepth; depth += 2) {
+    ctx.firstIteration = depth == params.startDepth;
+    int alpha = -kInfinity;
+    int iterBest = -1, iterValue = -kInfinity;
+    for (int k = 0; k < rootMoves; ++k) {
+      int i = order[k];
+      if (!child.CopyFrom(game)) break;
+      if (!child.TryClaimCell(pool[i].x, pool[i].y).accepted) continue;
+      ++ctx.nodes;
+      ctx.path[0] = MakeCellKey(pool[i].x, pool[i].y);
+      ctx.pathLen = 1;
+      int v = Search(child, depth - 1, 1, alpha, kInfinity, &ctx);
+      if (ctx.aborted) break;
+      // Equal values: keep some variety between games.
+      if (v > iterValue ||
+          (v == iterValue && ctx.firstIteration && Random(2))) {
+        iterValue = v;
+        iterBest = i;
+      }
+      if (v > alpha) alpha = v;
     }
-    if (v > alpha) alpha = v;
+    if (iterBest >= 0) bestIndex = iterBest;
+    if (ctx.aborted || ctx.nodes >= params.budget) break;
+    if ((uint64_t)depth >= freeCells) break;  // the game ends before that
+    // The best move goes first in the next iteration.
+    for (int k = 0; k < rootMoves; ++k) {
+      if (order[k] != bestIndex) continue;
+      for (int j = k; j > 0; --j) order[j] = order[j - 1];
+      order[0] = bestIndex;
+      break;
+    }
   }
   *x = pool[bestIndex].x;
   *y = pool[bestIndex].y;

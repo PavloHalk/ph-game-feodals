@@ -272,15 +272,6 @@ bool Validate(HWND dlg, DialogData* data) {
   ReadNames(dlg, data);
   int n = VisibleRows(data);
   for (int i = 0; i < n; ++i) {
-    if (!IsBotLevelAvailable(data->work.players[i].botLevel)) {
-      MessageBoxW(dlg,
-                  L"Рівень «дуже сильний» ще в розробці.\n"
-                  L"Поки що можна грати проти слабкого, середнього або "
-                  L"сильного комп'ютера.",
-                  L"Нова гра", MB_OK | MB_ICONINFORMATION);
-      SetFocus(GetDlgItem(dlg, IDC_KIND0 + i));
-      return false;
-    }
     if (!data->work.players[i].name[0]) {
       if (data->work.players[i].botLevel) {
         DefaultBotName(i, data->work.players[i].name);

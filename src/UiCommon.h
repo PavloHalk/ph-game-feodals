@@ -30,8 +30,3 @@ void DefaultBotName(int index, wchar_t* out);
 extern const wchar_t* const kBotLevelNames[kBotLevelCount];
 // "", "слабкий", ... indexed by BotLevel.
 extern const wchar_t* const kBotLevelShortNames[kBotLevelCount];
-
-// Levels that can be chosen already (the others are still in development).
-inline bool IsBotLevelAvailable(int level) {
-  return level != kBotVeryStrong;
-}
