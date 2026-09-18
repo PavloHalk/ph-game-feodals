@@ -105,10 +105,18 @@ MoveResult GameState::TryClaimCell(uint32_t x, uint32_t y) {
 // Two shortcuts keep the check cheap on huge boards: a region reaching outside
 // the player's bounding box is open (a straight line to the edge crosses no
 // player cell), and a region growing past kFloodFillLimit is treated as open.
-void GameState::ResolveEncirclement(uint32_t cx, uint32_t cy, uint8_t player,
-                                    MoveResult* result) {
+//
+// (cx, cy) counts as the player's cell even if it is still empty, so the same
+// code answers "what would this move capture?" without changing the state.
+void GameState::CollectEnclosed(uint32_t cx, uint32_t cy, uint8_t player,
+                                PodVec<uint64_t>* out) const {
+  const uint64_t claimed = MakeCellKey(cx, cy);
   uint32_t bx0 = boundsMinX_[player], bx1 = boundsMaxX_[player];
   uint32_t by0 = boundsMinY_[player], by1 = boundsMaxY_[player];
+  if (cx < bx0) bx0 = cx;
+  if (cx > bx1) bx1 = cx;
+  if (cy < by0) by0 = cy;
+  if (cy > by1) by1 = cy;
   bool nonPlayer[8], inside[8], edge[8];
   uint64_t keys[8];
   for (int i = 0; i < 8; ++i) {
@@ -205,7 +213,7 @@ void GameState::ResolveEncirclement(uint32_t cx, uint32_t cy, uint8_t player,
             continue;
           }
           uint64_t nkey = MakeCellKey((uint32_t)nx, (uint32_t)ny);
-          if (cells_.Get(nkey) == player) continue;
+          if (nkey == claimed || cells_.Get(nkey) == player) continue;
           int seen = visited.Get(nkey);
           if (seen >= 0) {
             int other = FindRoot(parent, seen);
@@ -232,7 +240,7 @@ void GameState::ResolveEncirclement(uint32_t cx, uint32_t cy, uint8_t player,
     }
   }
 
-  if (aborted) return;
+  if (aborted) return;  // out of memory: nothing is captured
 
   // A region is captured only if it is closed and was completely explored.
   bool capture[8] = {false};
@@ -247,32 +255,55 @@ void GameState::ResolveEncirclement(uint32_t cx, uint32_t cy, uint8_t player,
     capture[r] = exhausted;
   }
 
-  size_t newEntries = 0;
-  bool anyCapture = false;
   for (int g = 0; g < 8; ++g) {
     if (!used[g] || !capture[FindRoot(parent, g)]) continue;
-    anyCapture = true;
     for (size_t k = 0; k < queue[g].Size(); ++k) {
-      if (cells_.Get(queue[g][k]) < 0) ++newEntries;
+      if (!out->Push(queue[g][k])) return;
     }
   }
-  if (!anyCapture || !cells_.Reserve(cells_.Count() + newEntries)) return;
+}
 
-  for (int g = 0; g < 8; ++g) {
-    if (!used[g] || !capture[FindRoot(parent, g)]) continue;
-    for (size_t k = 0; k < queue[g].Size(); ++k) {
-      uint64_t key = queue[g][k];
-      int old = cells_.Set(key, player);
-      if (old >= 0) {
-        --counts_[old];
-      } else {
-        ++filled_;
-      }
-      ++counts_[player];
-      ++result->captured;
-      ExtendBox(result, CellKeyX(key), CellKeyY(key));
+void GameState::ResolveEncirclement(uint32_t cx, uint32_t cy, uint8_t player,
+                                    MoveResult* result) {
+  PodVec<uint64_t> enclosed;
+  CollectEnclosed(cx, cy, player, &enclosed);
+  if (!enclosed.Size()) return;
+
+  size_t newEntries = 0;
+  for (size_t k = 0; k < enclosed.Size(); ++k) {
+    if (cells_.Get(enclosed[k]) < 0) ++newEntries;
+  }
+  if (!cells_.Reserve(cells_.Count() + newEntries)) return;
+
+  for (size_t k = 0; k < enclosed.Size(); ++k) {
+    uint64_t key = enclosed[k];
+    int old = cells_.Set(key, player);
+    if (old >= 0) {
+      --counts_[old];
+    } else {
+      ++filled_;
+    }
+    ++counts_[player];
+    ++result->captured;
+    ExtendBox(result, CellKeyX(key), CellKeyY(key));
+  }
+}
+
+uint64_t GameState::EvaluateClaim(uint32_t x, uint32_t y, int player,
+                                  uint64_t* opponentCells) const {
+  if (opponentCells) *opponentCells = 0;
+  if (x >= width_ || y >= height_ || player < 0 || player >= numPlayers_ ||
+      cells_.Get(MakeCellKey(x, y)) >= 0) {
+    return 0;
+  }
+  PodVec<uint64_t> enclosed;
+  CollectEnclosed(x, y, (uint8_t)player, &enclosed);
+  if (opponentCells) {
+    for (size_t k = 0; k < enclosed.Size(); ++k) {
+      if (cells_.Get(enclosed[k]) >= 0) ++*opponentCells;
     }
   }
+  return enclosed.Size();
 }
 
 bool GameState::PlaceCell(uint32_t x, uint32_t y, int owner) {

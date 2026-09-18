@@ -67,3 +67,19 @@ const wchar_t* CellsWord(uint64_t count) {
 void DefaultPlayerName(int index, wchar_t* out) {
   wsprintfW(out, L"Гравець %d", index + 1);
 }
+
+void DefaultBotName(int index, wchar_t* out) {
+  wsprintfW(out, L"Комп'ютер %d", index + 1);
+}
+
+const wchar_t* const kBotLevelNames[kBotLevelCount] = {
+    L"Людина",
+    L"Комп'ютер: слабкий",
+    L"Комп'ютер: середній",
+    L"Комп'ютер: сильний",
+    L"Комп'ютер: дуже сильний",
+};
+
+const wchar_t* const kBotLevelShortNames[kBotLevelCount] = {
+    L"", L"слабкий", L"середній", L"сильний", L"дуже сильний",
+};

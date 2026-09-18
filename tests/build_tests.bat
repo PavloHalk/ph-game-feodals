@@ -6,7 +6,7 @@ if not exist build mkdir build
 set FLAGS=-std=c++14 -O2 -Wall -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0501 -DWINVER=0x0501
 set LIBS=-static -static-libgcc -static-libstdc++ -lws2_32 -lcomdlg32 -lgdi32
 
-g++ %FLAGS% tests\test_game.cpp src\GameState.cpp src\SaveManager.cpp ^
+g++ %FLAGS% tests\test_game.cpp src\GameState.cpp src\SaveManager.cpp src\Bot.cpp ^
   -o build\test_game.exe %LIBS%
 if errorlevel 1 exit /b 1
 g++ %FLAGS% tests\test_net.cpp src\NetGame.cpp src\GameState.cpp ^

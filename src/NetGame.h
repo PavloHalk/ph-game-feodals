@@ -19,7 +19,7 @@ const UINT WM_NET_SOCKET = WM_APP + 20;  // forward to OnSocketMessage
 const UINT WM_NET_EVENT = WM_APP + 21;   // wParam: NetEvent, lParam: detail
 
 const uint16_t kDefaultNetPort = 5757;
-const uint16_t kNetProtocolVersion = 1;
+const uint16_t kNetProtocolVersion = 2;  // 2: snapshots carry bot levels
 const int kMaxNetConnections = 16;
 
 enum NetRole { kNetOff, kNetHost, kNetClient };

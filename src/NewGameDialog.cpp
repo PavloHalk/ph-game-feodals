@@ -16,6 +16,7 @@ enum {
   IDC_LABEL0 = 1100,
   IDC_NAME0 = 1200,
   IDC_COLOR0 = 1300,
+  IDC_KIND0 = 1400,  // human or computer level, per player
 };
 
 struct Preset {
@@ -38,7 +39,7 @@ const uint64_t kLargeBoardCells = 25000000;  // warn above ~5000 x 5000
 const int kMargin = 12;
 const int kLabelWidth = 130;
 const int kFieldX = kMargin + kLabelWidth;
-const int kClientWidth = 360;
+const int kClientWidth = 480;
 const int kSeparatorTop = 114;
 const int kPlayersTop = 124;
 const int kPortRowHeight = 34;  // extra space for the port row (network)
@@ -70,7 +71,25 @@ void ReadNames(HWND dlg, DialogData* data) {
   for (int i = 0; i < kMaxPlayers; ++i) {
     GetDlgItemTextW(dlg, IDC_NAME0 + i, data->work.players[i].name,
                     kMaxNameLen);
+    int level = (int)SendDlgItemMessageW(dlg, IDC_KIND0 + i, CB_GETCURSEL, 0, 0);
+    if (level < 0 || level >= kBotLevelCount || data->network) level = kBotHuman;
+    data->work.players[i].botLevel = (uint8_t)level;
   }
+}
+
+// Switching between a person and the computer also switches an untouched
+// default name ("Гравець N" <-> "Комп'ютер N").
+void OnKindChanged(HWND dlg, int player) {
+  wchar_t name[kMaxNameLen], human[kMaxNameLen], bot[kMaxNameLen];
+  GetDlgItemTextW(dlg, IDC_NAME0 + player, name, kMaxNameLen);
+  DefaultPlayerName(player, human);
+  DefaultBotName(player, bot);
+  if (name[0] && lstrcmpW(name, human) != 0 && lstrcmpW(name, bot) != 0) {
+    return;
+  }
+  int level =
+      (int)SendDlgItemMessageW(dlg, IDC_KIND0 + player, CB_GETCURSEL, 0, 0);
+  SetDlgItemTextW(dlg, IDC_NAME0 + player, level > kBotHuman ? bot : human);
 }
 
 // Gives visible players that share a color the first free palette color.
@@ -117,6 +136,7 @@ void Layout(HWND dlg, DialogData* data, bool center) {
     int show = i < n ? SW_SHOW : SW_HIDE;
     ShowWindow(GetDlgItem(dlg, IDC_LABEL0 + i), show);
     ShowWindow(GetDlgItem(dlg, IDC_NAME0 + i), show);
+    ShowWindow(GetDlgItem(dlg, IDC_KIND0 + i), data->network ? SW_HIDE : show);
     ShowWindow(GetDlgItem(dlg, IDC_COLOR0 + i), show);
   }
   int buttonsY = PlayersTop(data) + n * kRowHeight + 10;
@@ -186,8 +206,17 @@ void CreateControls(HWND dlg, DialogData* data) {
                0, kMargin, y + 5, 26, 20, IDC_LABEL0 + i);
     HWND name = AddControl(dlg, f, L"EDIT", data->work.players[i].name,
                            ES_AUTOHSCROLL | tab, WS_EX_CLIENTEDGE,
-                           kMargin + 30, y + 2, 220, 23, IDC_NAME0 + i);
+                           kMargin + 30, y + 2, 160, 23, IDC_NAME0 + i);
     SendMessageW(name, EM_LIMITTEXT, kMaxNameLen - 1, 0);
+    HWND kind = AddControl(dlg, f, L"COMBOBOX", L"",
+                           CBS_DROPDOWNLIST | WS_VSCROLL | tab, 0,
+                           kMargin + 196, y + 1, 176, 240, IDC_KIND0 + i);
+    for (int k = 0; k < kBotLevelCount; ++k) {
+      SendMessageW(kind, CB_ADDSTRING, 0, (LPARAM)kBotLevelNames[k]);
+    }
+    int level = data->work.players[i].botLevel;
+    SendMessageW(kind, CB_SETCURSEL,
+                 level < kBotLevelCount && !data->network ? level : 0, 0);
     AddControl(dlg, f, L"BUTTON", L"", BS_OWNERDRAW | tab, 0,
                kClientWidth - kMargin - 76, y + 1, 76, 25, IDC_COLOR0 + i);
   }
@@ -243,8 +272,20 @@ bool Validate(HWND dlg, DialogData* data) {
   ReadNames(dlg, data);
   int n = VisibleRows(data);
   for (int i = 0; i < n; ++i) {
+    if (!IsBotLevelAvailable(data->work.players[i].botLevel)) {
+      MessageBoxW(dlg,
+                  L"Рівні «середній», «сильний» і «дуже сильний» ще в "
+                  L"розробці.\nПоки що можна грати проти слабкого комп'ютера.",
+                  L"Нова гра", MB_OK | MB_ICONINFORMATION);
+      SetFocus(GetDlgItem(dlg, IDC_KIND0 + i));
+      return false;
+    }
     if (!data->work.players[i].name[0]) {
-      DefaultPlayerName(i, data->work.players[i].name);
+      if (data->work.players[i].botLevel) {
+        DefaultBotName(i, data->work.players[i].name);
+      } else {
+        DefaultPlayerName(i, data->work.players[i].name);
+      }
     }
     for (int j = 0; j < i; ++j) {
       if (data->work.players[i].color == data->work.players[j].color) {
@@ -330,6 +371,9 @@ INT_PTR CALLBACK DialogProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM lParam) {
           InvalidateRect(GetDlgItem(dlg, IDC_COLOR0 + i), 0, TRUE);
         }
         Layout(dlg, data, false);
+      } else if (id >= IDC_KIND0 && id < IDC_KIND0 + kMaxPlayers &&
+                 code == CBN_SELCHANGE) {
+        OnKindChanged(dlg, id - IDC_KIND0);
       } else if (id >= IDC_COLOR0 && id < IDC_COLOR0 + kMaxPlayers &&
                  code == BN_CLICKED) {
         OnPickColor(dlg, data, id - IDC_COLOR0);

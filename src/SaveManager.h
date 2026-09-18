@@ -6,7 +6,8 @@
 //   uint32   board width
 //   uint32   board height
 //   uint8    player count
-//   per player: uint8 name length, UTF-8 name bytes, uint8 R, G, B
+//   per player: uint8 name length, UTF-8 name bytes, uint8 R, G, B,
+//               uint8 BotLevel (version 2+; version 1 files are all human)
 //   uint8    index of the player whose turn it is
 //   uint64   number of claimed cells
 //   per claimed cell: uint32 x, uint32 y, uint8 owner
@@ -17,7 +18,7 @@
 #include "ByteBuffer.h"
 #include "GameState.h"
 
-const uint16_t kSaveFormatVersion = 1;
+const uint16_t kSaveFormatVersion = 2;  // version 1 is still readable
 
 enum SaveResult {
   kSaveOk = 0,

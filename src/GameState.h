@@ -17,9 +17,20 @@ const uint32_t kMaxBoardSize = 1000000;
 // flood fill grows past this many cells is treated as open (not captured).
 const uint32_t kFloodFillLimit = 100000;
 
+// Who makes the moves of a player: a person or the computer at some level.
+enum BotLevel {
+  kBotHuman = 0,
+  kBotWeak,
+  kBotMedium,
+  kBotStrong,
+  kBotVeryStrong,
+};
+const int kBotLevelCount = 5;
+
 struct PlayerInfo {
   wchar_t name[kMaxNameLen];
-  uint32_t color;  // 0x00BBGGRR, same layout as COLORREF
+  uint32_t color;    // 0x00BBGGRR, same layout as COLORREF
+  uint8_t botLevel;  // BotLevel; always kBotHuman in network games
 };
 
 struct MoveResult {
@@ -41,6 +52,12 @@ class GameState {
   // A move of the current player. Rejected for occupied or out-of-range cells
   // and after the game is over.
   MoveResult TryClaimCell(uint32_t x, uint32_t y);
+
+  // What claiming the free cell (x, y) by `player` would capture, without
+  // changing anything: number of enclosed cells, and in `opponentCells`
+  // (optional) how many of them already belong to other players.
+  uint64_t EvaluateClaim(uint32_t x, uint32_t y, int player,
+                         uint64_t* opponentCells) const;
 
   // Used when restoring a saved game: sets an unclaimed cell without running
   // capture logic. Returns false for invalid input or an occupied cell.
@@ -87,6 +104,8 @@ class GameState {
   GameState(const GameState&);
   void operator=(const GameState&);
 
+  void CollectEnclosed(uint32_t x, uint32_t y, uint8_t player,
+                       PodVec<uint64_t>* out) const;
   void ResolveEncirclement(uint32_t x, uint32_t y, uint8_t player,
                            MoveResult* result);
   void AddToBounds(int player, uint32_t x, uint32_t y);

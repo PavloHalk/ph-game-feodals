@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <commctrl.h>
 
+#include "Bot.h"
 #include "GameState.h"
 #include "InputHandler.h"
 #include "NetDialogs.h"
@@ -41,6 +42,8 @@ enum {
 const UINT WM_APP_START = WM_APP + 1;
 const int kPanelWidth = 240;
 const int kLastMoveCheckId = 3000;
+const UINT_PTR kBotTimerId = 1;
+const UINT kBotDelayMs = 400;  // lets people see the computer's move
 
 // Shown in "Про програму". Change only on request.
 const wchar_t kAppVersion[] = L"1.0.0";
@@ -77,6 +80,8 @@ struct App {
 
   HWND lastMoveCheck;  // per-window option, not saved with the game
   bool showLastMove;
+
+  Bot bot;
 };
 
 App g_app;
@@ -106,9 +111,25 @@ void UpdateTitle() {
 }
 
 // Whether a click on the board may make a move right now.
+// Local game where the current player is a computer (never in network games).
+bool IsBotTurn() {
+  const GameState& g = g_app.game;
+  return !g_app.net.IsActive() && !g_app.viewOnly && g.NumPlayers() &&
+         !g.IsGameOver() && g.Player(g.CurrentPlayer()).botLevel != kBotHuman;
+}
+
+// Arms the timer that makes the computer move, or cancels it.
+void ScheduleBot() {
+  if (IsBotTurn()) {
+    SetTimer(g_app.main, kBotTimerId, kBotDelayMs, 0);
+  } else {
+    KillTimer(g_app.main, kBotTimerId);
+  }
+}
+
 bool LocalInputAllowed() {
   if (g_app.net.IsActive()) return g_app.net.CanLocalPlayerMove();
-  return !g_app.viewOnly && !g_app.game.IsGameOver();
+  return !g_app.viewOnly && !g_app.game.IsGameOver() && !IsBotTurn();
 }
 
 void RefreshAll() {
@@ -283,6 +304,7 @@ bool StartGame(const NewGameSettings& settings) {
   g_app.dirty = false;
   g_app.viewOnly = false;
   ResetView(true);
+  ScheduleBot();
   return true;
 }
 
@@ -368,6 +390,7 @@ void AfterGameLoaded(const wchar_t* path) {
   g_app.dirty = false;
   g_app.viewOnly = false;
   ResetView(true);
+  ScheduleBot();
 }
 
 void LoadFromFile() {
@@ -704,6 +727,21 @@ void ShowAbout() {
 
 // ---- Board window -----------------------------------------------------------
 
+// Common part after a move made in this window (a click or the computer).
+void AfterLocalMove(const MoveResult& r) {
+  if (!g_app.dirty) {
+    g_app.dirty = true;
+    UpdateTitle();
+  }
+  RefreshAll();
+  if (r.gameOver) {
+    UpdateWindow(g_app.board);
+    UpdateWindow(g_app.panel);
+    ShowResults();
+  }
+  ScheduleBot();
+}
+
 void OnBoardClick(int x, int y) {
   if (!LocalInputAllowed()) return;
   MoveResult r;
@@ -723,16 +761,26 @@ void OnBoardClick(int x, int y) {
     r = HandleBoardClick(g_app.game, x, y, g_app.scrollX, g_app.scrollY);
     if (!r.accepted) return;
   }
-  if (!g_app.dirty) {
-    g_app.dirty = true;
-    UpdateTitle();
+  AfterLocalMove(r);
+}
+
+// A computer player's turn in a local game.
+void OnBotTimer() {
+  KillTimer(g_app.main, kBotTimerId);
+  if (!IsBotTurn()) return;
+  if (!IsWindowEnabled(g_app.main)) {  // a dialog is open: wait for it
+    ScheduleBot();
+    return;
   }
-  RefreshAll();
-  if (r.gameOver) {
-    UpdateWindow(g_app.board);
-    UpdateWindow(g_app.panel);
-    ShowResults();
+  uint32_t x, y;
+  if (!g_app.bot.ChooseMove(g_app.game, &x, &y)) return;
+  MoveResult r = g_app.game.TryClaimCell(x, y);
+  if (!r.accepted) {
+    ScheduleBot();
+    return;
   }
+  g_app.hover.valid = false;
+  AfterLocalMove(r);
 }
 
 LRESULT CALLBACK BoardProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -949,6 +997,10 @@ void PaintPanel(HWND hwnd) {
       FormatCount(g.CellCount(i), count);
       FormatPercent(g.CellCount(i), g.TotalCells(), percent);
       wsprintfW(buf, L"%s %s · %s", count, CellsWord(g.CellCount(i)), percent);
+      if (!net.IsActive() && p.botLevel && p.botLevel < kBotLevelCount) {
+        lstrcatW(buf, L" · ");  // computer player: its level
+        lstrcatW(buf, kBotLevelShortNames[p.botLevel]);
+      }
     }
     DrawTextAt(dc, buf, row.left + 42, y + 21, row.right - 6, y + 39, DT_LEFT);
     y += 46;
@@ -1027,7 +1079,8 @@ void PaintPanel(HWND hwnd) {
       SetTextColor(dc, RGB(0, 130, 40));
       lstrcpyW(buf, L"Ваш хід!");
     } else {
-      wsprintfW(buf, L"Хід: %s", g.Player(g.CurrentPlayer()).name);
+      wsprintfW(buf, IsBotTurn() ? L"Хід: %s (думає…)" : L"Хід: %s",
+                g.Player(g.CurrentPlayer()).name);
     }
     DrawTextAt(dc, buf, 14, y, w - 10, y + 18, DT_LEFT);
   }
@@ -1193,6 +1246,9 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_NET_EVENT:
       OnNetEvent(wParam, lParam);
       return 0;
+    case WM_TIMER:
+      if (wParam == kBotTimerId) OnBotTimer();
+      return 0;
     case WM_APP_START:
       // Default game (30 x 30, two players) once the window has its size;
       // the player starts another one or loads a save from the menu.
@@ -1240,6 +1296,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int showCmd) {
   InitCommonControls();  // loads comctl32 so the v6 manifest styles apply
 
   g_app.instance = instance;
+  g_app.bot.Seed(GetTickCount());
   g_app.font = CreateUiFont(false);
   g_app.boldFont = CreateUiFont(true);
   g_app.titleFont = CreateUiFont(true, 3);

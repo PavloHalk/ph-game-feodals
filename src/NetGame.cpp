@@ -381,6 +381,7 @@ int NetGame::HostNewGame(GameState* game, uint16_t port, uint32_t width,
     placeholder[i].color = kDefaultPalette[i];
   }
   placeholder[0] = host;
+  for (int i = 0; i < kMaxPlayers; ++i) placeholder[i].botLevel = kBotHuman;
   if (!game->Init(width, height, numPlayers, placeholder)) {
     return WSAEINVAL;
   }
@@ -409,7 +410,7 @@ int NetGame::HostNewGame(GameState* game, uint16_t port, uint32_t width,
   numSlots_ = numPlayers;
   for (int i = 0; i < numPlayers; ++i) slots_[i].state = kSlotOpen;
   slots_[0].state = kSlotConnected;
-  slots_[0].info = host;
+  slots_[0].info = placeholder[0];
   localSlot_ = 0;
   return 0;
 }
@@ -435,10 +436,14 @@ int NetGame::HostSavedGame(GameState* game, uint16_t port, int hostSlot,
     return error;
   }
 
-  if (hostName && hostName[0]) {
-    PlayerInfo info = game->Player(hostSlot);
-    lstrcpynW(info.name, hostName, kMaxNameLen);
-    game->SetPlayerInfo(hostSlot, info);
+  // Computer players of a saved game become seats for people.
+  for (int i = 0; i < game->NumPlayers(); ++i) {
+    PlayerInfo info = game->Player(i);
+    info.botLevel = kBotHuman;
+    if (i == hostSlot && hostName && hostName[0]) {
+      lstrcpynW(info.name, hostName, kMaxNameLen);
+    }
+    game->SetPlayerInfo(i, info);
   }
 
   listen_ = (uintptr_t)s;

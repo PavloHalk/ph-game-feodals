@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <windows.h>
 
+#include "../src/Bot.h"
 #include "../src/GameState.h"
 #include "../src/SaveManager.h"
 
@@ -395,6 +396,8 @@ static void TestSaveLoad() {
   info[0].color = 0x0000FF;
   info[1].color = 0xFF0000;
   info[2].color = 0x00FF00;
+  info[1].botLevel = kBotWeak;
+  info[2].botLevel = kBotVeryStrong;
   CHECK(g.Init(123456, 77, 3, info));
   for (int i = 0; i < 5000; ++i) g.TryClaimCell(Rand() % 123456, Rand() % 77);
 
@@ -412,6 +415,7 @@ static void TestSaveLoad() {
     CHECK(wcscmp(l.Player(p).name, g.Player(p).name) == 0);
     CHECK(l.Player(p).color == g.Player(p).color);
     CHECK(l.CellCount(p) == g.CellCount(p));
+    CHECK(l.Player(p).botLevel == g.Player(p).botLevel);
   }
   const CellMap& cells = g.Cells();
   bool same = true;
@@ -433,6 +437,135 @@ static void TestSaveLoad() {
   CHECK(LoadGame(path, &l) == kSaveErrOpen);
 }
 
+// A version 1 file (no bot levels) still loads, everybody human.
+static void TestLoadVersion1() {
+  ByteBuffer b;
+  b.Bytes("FEOD", 4);
+  b.U16(1);
+  b.U32(10);
+  b.U32(12);
+  b.U8(2);
+  b.U8(1); b.U8('A'); b.U8(255); b.U8(0); b.U8(0);
+  b.U8(1); b.U8('B'); b.U8(0); b.U8(0); b.U8(255);
+  b.U8(1);   // current player
+  b.U64(2);  // cells
+  b.U32(3); b.U32(4); b.U8(0);
+  b.U32(5); b.U32(6); b.U8(1);
+  GameState g;
+  CHECK(DeserializeGame(b.Data(), b.Size(), &g) == kSaveOk);
+  CHECK(g.Width() == 10 && g.Height() == 12 && g.CurrentPlayer() == 1);
+  CHECK(g.Owner(3, 4) == 0 && g.Owner(5, 6) == 1);
+  CHECK(g.Player(0).botLevel == kBotHuman && g.Player(1).botLevel == kBotHuman);
+  CHECK(!g.HasLastMove());
+}
+
+// ---- Computer players -------------------------------------------------------
+
+static void InitBots(GameState* g, uint32_t w, uint32_t h, int bot0,
+                     int bot1) {
+  PlayerInfo info[kMaxPlayers];
+  memset(info, 0, sizeof(info));
+  info[0].color = 1;
+  info[1].color = 2;
+  info[0].botLevel = (uint8_t)bot0;
+  info[1].botLevel = (uint8_t)bot1;
+  CHECK(g->Init(w, h, 2, info));
+}
+
+static void TestEvaluateClaim() {
+  GameState g;
+  InitGame(&g, 10, 10, 2);
+  const char* pic[] = {"000", "01.", "000"};
+  Draw(&g, 3, 3, pic, 3);
+  uint64_t opp = 99;
+  CHECK(g.EvaluateClaim(5, 4, 0, &opp) == 1 && opp == 1);
+  CHECK(g.Owner(4, 4) == 1 && g.Owner(5, 4) == -1);  // nothing changed
+  CHECK(g.EvaluateClaim(5, 4, 1, &opp) == 0 && opp == 0);
+  CHECK(g.EvaluateClaim(3, 3, 0, &opp) == 0);  // occupied
+  CHECK(g.EvaluateClaim(8, 8, 0, 0) == 0);
+}
+
+static void TestBotPlaysLegalGames() {
+  for (int game = 0; game < 30; ++game) {
+    uint32_t w = 10 + game % 21, h = 10 + (game * 7) % 21;
+    GameState g;
+    InitBots(&g, w, h, kBotWeak, kBotWeak);
+    Bot bot(1000 + game);
+    uint64_t moves = 0;
+    bool legal = true;
+    while (!g.IsGameOver() && moves <= g.TotalCells()) {
+      uint32_t x, y;
+      if (!bot.ChooseMove(g, &x, &y) || g.Owner(x, y) >= 0) {
+        legal = false;
+        break;
+      }
+      legal = g.TryClaimCell(x, y).accepted;
+      if (!legal) break;
+      ++moves;
+    }
+    CHECK(legal && g.IsGameOver());
+  }
+}
+
+static void TestBotTakesCaptures() {
+  int taken = 0;
+  for (int seed = 1; seed <= 100; ++seed) {
+    GameState g;
+    InitBots(&g, 20, 20, kBotWeak, kBotHuman);
+    const char* pic[] = {"000", "01.", "000"};
+    Draw(&g, 8, 8, pic, 3);
+    g.SetCurrentPlayer(0);
+    Bot bot(seed);
+    uint32_t x, y;
+    CHECK(bot.ChooseMove(g, &x, &y));
+    if (x == 10 && y == 9) ++taken;
+  }
+  printf("  weak bot took an open capture in %d of 100 games\n", taken);
+  CHECK(taken >= 60 && taken < 100);  // usually, but not always
+}
+
+static void TestBotBeatsRandomPlayer() {
+  int wins = 0, games = 20;
+  for (int game = 0; game < games; ++game) {
+    GameState g;
+    InitBots(&g, 20, 20, game % 2 ? kBotWeak : kBotHuman,
+             game % 2 ? kBotHuman : kBotWeak);
+    int botPlayer = game % 2 ? 0 : 1;
+    Bot bot(77 + game);
+    while (!g.IsGameOver()) {
+      uint32_t x, y;
+      if (g.CurrentPlayer() == botPlayer) {
+        bot.ChooseMove(g, &x, &y);
+      } else {
+        do {
+          x = Rand() % 20;
+          y = Rand() % 20;
+        } while (g.Owner(x, y) >= 0);
+      }
+      g.TryClaimCell(x, y);
+    }
+    if (g.CellCount(botPlayer) > g.CellCount(1 - botPlayer)) ++wins;
+  }
+  printf("  weak bot beat a random player in %d of %d games\n", wins, games);
+  CHECK(wins >= games * 3 / 4);
+}
+
+static void TestBotOnHugeBoard() {
+  GameState g;
+  InitBots(&g, 1000000, 1000000, kBotWeak, kBotWeak);
+  Bot bot(5);
+  LARGE_INTEGER t0 = Now();
+  for (int i = 0; i < 400; ++i) {
+    uint32_t x, y;
+    CHECK(bot.ChooseMove(g, &x, &y));
+    CHECK(g.TryClaimCell(x, y).accepted);
+  }
+  DWORD ms = Ms(t0, Now());
+  printf("  400 weak bot moves on 1000000x1000000: %lu ms\n",
+         (unsigned long)ms);
+  CHECK(ms < 4000);
+}
+
 int main() {
   TestBasicMove();
   TestSpecExample();
@@ -446,6 +579,12 @@ int main() {
   TestHugeBoard();
   TestFloodFillLimit();
   TestSaveLoad();
+  TestLoadVersion1();
+  TestEvaluateClaim();
+  TestBotPlaysLegalGames();
+  TestBotTakesCaptures();
+  TestBotBeatsRandomPlayer();
+  TestBotOnHugeBoard();
   printf("%d checks, %d failures\n", g_checks, g_failures);
   return g_failures ? 1 : 0;
 }

@@ -58,6 +58,7 @@ bool SerializeGame(const GameState& game, ByteBuffer* out) {
   out->U8(game.NumPlayers());
   for (int i = 0; i < game.NumPlayers(); ++i) {
     WritePlayerInfo(out, game.Player(i));
+    out->U8(game.Player(i).botLevel);
   }
   out->U8(game.CurrentPlayer());
   out->U64(cells.Count());
@@ -86,7 +87,7 @@ SaveResult DeserializeGame(const uint8_t* data, size_t size, GameState* game) {
   }
   uint32_t version = in.U16();
   if (!in.Ok()) return kSaveErrFormat;
-  if (version != kSaveFormatVersion) return kSaveErrVersion;
+  if (version < 1 || version > kSaveFormatVersion) return kSaveErrVersion;
 
   uint32_t width = in.U32();
   uint32_t height = in.U32();
@@ -98,6 +99,11 @@ SaveResult DeserializeGame(const uint8_t* data, size_t size, GameState* game) {
   memset(players, 0, sizeof(players));
   for (int i = 0; i < numPlayers; ++i) {
     if (!ReadPlayerInfo(&in, &players[i])) return kSaveErrFormat;
+    if (version >= 2) {
+      uint32_t level = in.U8();
+      if (level >= (uint32_t)kBotLevelCount) return kSaveErrFormat;
+      players[i].botLevel = (uint8_t)level;
+    }
   }
   int current = (int)in.U8();
   uint64_t cellCount = in.U64();
