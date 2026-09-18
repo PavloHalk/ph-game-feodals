@@ -114,6 +114,25 @@ class CellMap {
     }
   }
 
+  // Makes this map an exact copy of `other`. Returns false on out of memory
+  // (this map is left empty then).
+  bool CopyFrom(const CellMap& other) {
+    if (this == &other) return true;
+    Free();
+    if (!other.cap_) return true;
+    keys_ = (uint64_t*)malloc(other.cap_ * sizeof(uint64_t));
+    vals_ = (uint8_t*)malloc(other.cap_);
+    if (!keys_ || !vals_) {
+      Free();
+      return false;
+    }
+    memcpy(keys_, other.keys_, other.cap_ * sizeof(uint64_t));
+    memcpy(vals_, other.vals_, other.cap_);
+    cap_ = other.cap_;
+    count_ = other.count_;
+    return true;
+  }
+
   void Swap(CellMap& other) {
     uint64_t* k = keys_; keys_ = other.keys_; other.keys_ = k;
     uint8_t* v = vals_; vals_ = other.vals_; other.vals_ = v;

@@ -566,6 +566,142 @@ static void TestBotOnHugeBoard() {
   CHECK(ms < 4000);
 }
 
+// Plays a whole game between two levels (kBotHuman = random mover) and
+// returns the winner (0/1) or -1 for a draw. `slowest` gets the longest move.
+static int PlayMatch(uint32_t size, int level0, int level1, uint32_t seed,
+                     DWORD* slowest) {
+  GameState g;
+  InitBots(&g, size, size, level0, level1);
+  Bot bot(seed);
+  while (!g.IsGameOver()) {
+    uint32_t x, y;
+    if (g.Player(g.CurrentPlayer()).botLevel == kBotHuman) {
+      do {
+        x = Rand() % size;
+        y = Rand() % size;
+      } while (g.Owner(x, y) >= 0);
+    } else {
+      LARGE_INTEGER t0 = Now();
+      if (!bot.ChooseMove(g, &x, &y)) return -2;
+      DWORD ms = Ms(t0, Now());
+      if (slowest && ms > *slowest) *slowest = ms;
+    }
+    if (!g.TryClaimCell(x, y).accepted) return -2;
+  }
+  if (g.CellCount(0) == g.CellCount(1)) return -1;
+  return g.CellCount(0) > g.CellCount(1) ? 0 : 1;
+}
+
+// Best capture (enclosed cells + other players' cells in them) `player`
+// could make in `g` right now, by brute force over the whole board.
+static uint64_t BestCapture(const GameState& g, int player) {
+  uint64_t best = 0;
+  for (uint32_t y = 0; y < g.Height(); ++y) {
+    for (uint32_t x = 0; x < g.Width(); ++x) {
+      uint64_t others = 0;
+      uint64_t captured = g.EvaluateClaim(x, y, player, &others);
+      if (captured + others > best) best = captured + others;
+    }
+  }
+  return best;
+}
+
+// Medium must find the best capture, and when threatened, a move after which
+// the opponent's best capture is as small as possible (checked against a
+// brute force over every free cell).
+static void TestMediumBlocksAndCaptures() {
+  const char* pic[] = {"000", "01.", "000", "....", ".11."};
+  GameState base;
+  InitBots(&base, 20, 20, kBotHuman, kBotMedium);
+  Draw(&base, 8, 8, pic, 5);
+
+  // Defence: player 1 (medium) to move.
+  uint64_t minLoss = ~0ULL;
+  GameState after;
+  uint64_t loss[20][20];
+  for (uint32_t y = 0; y < 20; ++y) {
+    for (uint32_t x = 0; x < 20; ++x) {
+      loss[y][x] = ~0ULL;
+      if (base.Owner(x, y) >= 0) continue;
+      after.CopyFrom(base);
+      after.SetCurrentPlayer(1);
+      after.TryClaimCell(x, y);
+      loss[y][x] = BestCapture(after, 0);
+      if (loss[y][x] < minLoss) minLoss = loss[y][x];
+    }
+  }
+  CHECK(BestCapture(base, 0) > minLoss);  // there is something to defend
+
+  // Attack: the same picture with medium as player 0.
+  GameState attack;
+  InitBots(&attack, 20, 20, kBotMedium, kBotHuman);
+  Draw(&attack, 8, 8, pic, 5);
+  attack.SetCurrentPlayer(0);
+  uint64_t bestGain = BestCapture(attack, 0);
+  CHECK(bestGain > 0);
+
+  int defended = 0, captured = 0;
+  for (int seed = 1; seed <= 30; ++seed) {
+    Bot bot(seed);
+    uint32_t x, y;
+    base.SetCurrentPlayer(1);
+    CHECK(bot.ChooseMove(base, &x, &y));
+    if (loss[y][x] == minLoss) ++defended;
+    CHECK(bot.ChooseMove(attack, &x, &y));
+    uint64_t others = 0;
+    uint64_t gain = attack.EvaluateClaim(x, y, 0, &others);
+    if (gain + others == bestGain) ++captured;
+  }
+  printf("  medium bot: best defence %d/30, best capture %d/30\n", defended,
+         captured);
+  CHECK(defended >= 27 && captured >= 27);
+}
+
+static void TestMediumStrength() {
+  int beatWeak = 0, beatRandom = 0, games = 20;
+  DWORD slowest = 0;
+  for (int game = 0; game < games; ++game) {
+    bool mediumFirst = game % 2 == 0;
+    int winner = PlayMatch(20, mediumFirst ? kBotMedium : kBotWeak,
+                           mediumFirst ? kBotWeak : kBotMedium, 300 + game,
+                           &slowest);
+    CHECK(winner != -2);
+    if (winner == (mediumFirst ? 0 : 1)) ++beatWeak;
+    winner = PlayMatch(20, mediumFirst ? kBotMedium : kBotHuman,
+                       mediumFirst ? kBotHuman : kBotMedium, 500 + game,
+                       &slowest);
+    CHECK(winner != -2);
+    if (winner == (mediumFirst ? 0 : 1)) ++beatRandom;
+  }
+  printf("  medium bot beat weak %d/%d, random %d/%d; slowest move %lu ms\n",
+         beatWeak, games, beatRandom, games, (unsigned long)slowest);
+  CHECK(beatWeak >= games * 7 / 10);
+  CHECK(beatRandom == games);
+  CHECK(slowest < 300);
+}
+
+static void TestMediumOnBigBoards() {
+  DWORD slowest = 0;
+  CHECK(PlayMatch(40, kBotMedium, kBotMedium, 9, &slowest) != -2);
+  printf("  medium vs medium on 40x40: slowest move %lu ms\n",
+         (unsigned long)slowest);
+  CHECK(slowest < 500);
+
+  GameState g;
+  InitBots(&g, 1000000, 1000000, kBotMedium, kBotMedium);
+  Bot bot(11);
+  LARGE_INTEGER t0 = Now();
+  for (int i = 0; i < 200; ++i) {
+    uint32_t x, y;
+    CHECK(bot.ChooseMove(g, &x, &y));
+    CHECK(g.TryClaimCell(x, y).accepted);
+  }
+  DWORD ms = Ms(t0, Now());
+  printf("  200 medium bot moves on 1000000x1000000: %lu ms\n",
+         (unsigned long)ms);
+  CHECK(ms < 10000);
+}
+
 int main() {
   TestBasicMove();
   TestSpecExample();
@@ -585,6 +721,9 @@ int main() {
   TestBotTakesCaptures();
   TestBotBeatsRandomPlayer();
   TestBotOnHugeBoard();
+  TestMediumBlocksAndCaptures();
+  TestMediumStrength();
+  TestMediumOnBigBoards();
   printf("%d checks, %d failures\n", g_checks, g_failures);
   return g_failures ? 1 : 0;
 }

@@ -8,8 +8,8 @@ Specification (Ukrainian): [working_assets/feodals-spec.md](working_assets/feoda
 
 | Toolchain | Command | Output |
 |---|---|---|
-| MinGW g++ (32-bit) | `build_mingw.bat` | `build\Feodals.exe` (~110 KB, Windows XP and later) |
-| MSVC (32-bit) | `build_msvc.bat` | `build\Feodals_msvc.exe` (~152 KB) |
+| MinGW g++ (32-bit) | `build_mingw.bat` | `build\Feodals.exe` (~113 KB, Windows XP and later) |
+| MSVC (32-bit) | `build_msvc.bat` | `build\Feodals_msvc.exe` (~155 KB) |
 | Tests (MinGW) | `tests\build_tests.bat` | builds and runs `build\test_game.exe` (rules, saves, computer player) and `build\test_net.exe` (networking over 127.0.0.1) |
 
 `build_msvc.bat` locates Visual Studio via `vswhere`. An MSVC build for Windows XP needs the `v141_xp` toolset and `/SUBSYSTEM:WINDOWS,5.01`; newer toolsets produce binaries for Vista/7 and later.
@@ -24,7 +24,7 @@ The executable depends only on system DLLs (`user32`, `gdi32`, `kernel32`, `comd
 ## How to play
 
 - The program starts with a 30×30 game for two players. Start another one or load a save from the «Гра» (Game) menu.
-- **Playing against the computer:** in the new game dialog every player is either «Людина» (a person) or «Комп'ютер» (the computer) with a difficulty level: weak, medium, strong, very strong. Only **weak** is available so far; the other levels are planned. The computer moves by itself about 0.4 s after the previous move. Computer players exist only in local games, not in network ones.
+- **Playing against the computer:** in the new game dialog every player is either «Людина» (a person) or «Комп'ютер» (the computer) with a difficulty level: weak, medium, strong, very strong. **Weak** and **medium** are available; strong and very strong are planned. The computer moves by itself about 0.4 s after the previous move. Computer players exist only in local games, not in network ones.
 - **Left click** an unclaimed cell to claim it. The turn then passes to the next player.
 - **Encirclement:** when your cells close off an area (unclaimed and/or opponents' cells), the whole area becomes yours. As with dots on paper, cells touching only at corners also form a wall. Territory inside connects only through cell sides. The board edge is not a wall.
 - The game ends when every cell is claimed.
@@ -66,7 +66,10 @@ How it works: TCP (IPv4, Winsock 2), events via `WSAAsyncSelect` in the regular 
 
 ### Computer player
 
-The weak level has no look-ahead and no strategy. It considers free cells within two cells of claimed ones (a random sample of anchors on crowded boards, so a move stays fast even on a 1 000 000×1 000 000 board). It scores each one with a local heuristic: a capture found via `GameState::EvaluateClaim` (a dry run of the encirclement check), extra for opponents' cells in it, touching opponents, extending a wall next to them. It adds random noise, sometimes overlooks a capture, sometimes plays one of its top moves at random, and never defends its own territory. Tests: it takes an open capture in about 70% of cases and beats a random player in 20 of 20 games.
+Both levels start from the same candidates: free cells within two cells of claimed ones (a random sample of anchors on crowded boards, so a move stays fast even on a 1 000 000×1 000 000 board). They share a local positional heuristic that favours touching opponents and extending a wall next to them. Captures are found with `GameState::EvaluateClaim`, a dry run of the encirclement check.
+
+- **Weak:** no look-ahead and no strategy. It adds random noise, overlooks a capture now and then, sometimes plays one of its top moves at random, and never defends its own territory. Tests: it takes an open capture in about 70% of cases and beats a random player in 20 of 20 games.
+- **Medium:** first ranks candidates by what they capture now and by how much they block (cells where an opponent would capture). Then it plays out the best 16 on a copy of the board and subtracts the best capture the next player could answer with (one reply of look-ahead). A move that leaves it two capture threats (a fork) gets a bonus, but only half of the time. Cells won or lost outweigh position. Tests: the best defence in 28 of 30 cases and the best capture in 29 of 30, checked against a brute force over every cell; it beats the weak level in 20 of 20 games; its slowest move on a 20×20 board takes a few tens of milliseconds.
 
 Saves use format version 2, which stores each player's level; version 1 files still load (everyone human).
 

@@ -274,8 +274,9 @@ bool Validate(HWND dlg, DialogData* data) {
   for (int i = 0; i < n; ++i) {
     if (!IsBotLevelAvailable(data->work.players[i].botLevel)) {
       MessageBoxW(dlg,
-                  L"Рівні «середній», «сильний» і «дуже сильний» ще в "
-                  L"розробці.\nПоки що можна грати проти слабкого комп'ютера.",
+                  L"Рівні «сильний» і «дуже сильний» ще в розробці.\n"
+                  L"Поки що можна грати проти слабкого або середнього "
+                  L"комп'ютера.",
                   L"Нова гра", MB_OK | MB_ICONINFORMATION);
       SetFocus(GetDlgItem(dlg, IDC_KIND0 + i));
       return false;

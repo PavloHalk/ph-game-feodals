@@ -68,6 +68,8 @@ class GameState {
   bool SetPlayerInfo(int player, const PlayerInfo& info);
 
   void Swap(GameState& other);
+  // Exact copy (for look-ahead); false on out of memory.
+  bool CopyFrom(const GameState& other);
 
   uint32_t Width() const { return width_; }
   uint32_t Height() const { return height_; }

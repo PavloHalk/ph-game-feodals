@@ -342,6 +342,26 @@ bool GameState::SetPlayerInfo(int player, const PlayerInfo& info) {
   return true;
 }
 
+bool GameState::CopyFrom(const GameState& other) {
+  if (this == &other) return true;
+  if (!cells_.CopyFrom(other.cells_)) return false;
+  width_ = other.width_;
+  height_ = other.height_;
+  numPlayers_ = other.numPlayers_;
+  current_ = other.current_;
+  filled_ = other.filled_;
+  hasLastMove_ = other.hasLastMove_;
+  lastMoveX_ = other.lastMoveX_;
+  lastMoveY_ = other.lastMoveY_;
+  memcpy(players_, other.players_, sizeof(players_));
+  memcpy(counts_, other.counts_, sizeof(counts_));
+  memcpy(boundsMinX_, other.boundsMinX_, sizeof(boundsMinX_));
+  memcpy(boundsMinY_, other.boundsMinY_, sizeof(boundsMinY_));
+  memcpy(boundsMaxX_, other.boundsMaxX_, sizeof(boundsMaxX_));
+  memcpy(boundsMaxY_, other.boundsMaxY_, sizeof(boundsMaxY_));
+  return true;
+}
+
 void GameState::Swap(GameState& other) {
   uint32_t u;
   u = width_; width_ = other.width_; other.width_ = u;
