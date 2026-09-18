@@ -33,5 +33,5 @@ extern const wchar_t* const kBotLevelShortNames[kBotLevelCount];
 
 // Levels that can be chosen already (the others are still in development).
 inline bool IsBotLevelAvailable(int level) {
-  return level == kBotHuman || level == kBotWeak || level == kBotMedium;
+  return level != kBotVeryStrong;
 }

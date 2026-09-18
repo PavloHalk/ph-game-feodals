@@ -8,7 +8,10 @@
 //   medium  - also blocks the next opponent's captures, looks one reply ahead
 //             (its move, then the opponent's best capture), and now and then
 //             sets up a fork (two capture threats at once).
-//   strong, very strong - not implemented yet; they play like medium.
+//   strong  - alpha-beta search four plies deep over the most promising moves,
+//             evaluating cells, pending captures and capture threats (so it
+//             sets up forks and avoids traps several moves ahead).
+//   very strong - not implemented yet; plays like strong.
 #pragma once
 
 #include "GameState.h"
@@ -34,8 +37,32 @@ class Bot {
     int gain;  // enclosed cells plus other players' cells among them
   };
 
+  // Figures gathered while ordering the moves of a search node, reused by
+  // the static evaluation.
+  struct NodeStats {
+    int moverBest;     // best capture of the player to move
+    int moverThreats;  // number of capturing cells of the player to move
+    int nextBest;      // best capture of the player after
+    int nextThreats;
+  };
+  struct SearchContext;
+
   bool ChooseWeak(const GameState& game, uint32_t* x, uint32_t* y);
   bool ChooseMedium(const GameState& game, uint32_t* x, uint32_t* y);
+  bool ChooseStrong(const GameState& game, uint32_t* x, uint32_t* y);
+
+  // Candidate moves of a search node, best first (at most `limit`).
+  int OrderMoves(const GameState& state, SearchContext* ctx, Candidate* out,
+                 int limit, NodeStats* stats);
+  int Evaluate(const GameState& state, const SearchContext& ctx,
+               const NodeStats& stats);
+  int Search(const GameState& state, int depth, int alpha, int beta,
+             SearchContext* ctx);
+
+  // Candidates ranked by static score, what they capture now and what they
+  // block (captures of others); the best `limit` go to `top`.
+  int RankOnePly(const GameState& game, const PodVec<Candidate>& candidates,
+                 Candidate* top, int limit);
 
   bool Opening(const GameState& game, uint32_t* x, uint32_t* y);
   bool AnyFreeCell(const GameState& game, uint32_t* x, uint32_t* y);

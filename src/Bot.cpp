@@ -60,11 +60,14 @@ uint32_t Bot::Random() {
 
 bool Bot::ChooseMove(const GameState& game, uint32_t* x, uint32_t* y) {
   if (!game.Width() || game.IsGameOver()) return false;
-  if (game.Player(game.CurrentPlayer()).botLevel == kBotWeak) {
-    return ChooseWeak(game, x, y);
+  switch (game.Player(game.CurrentPlayer()).botLevel) {
+    case kBotWeak:
+      return ChooseWeak(game, x, y);
+    case kBotMedium:
+      return ChooseMedium(game, x, y);
+    default:  // very strong is not written yet: it plays like strong
+      return ChooseStrong(game, x, y);
   }
-  // Strong levels are not written yet: they play like the medium one.
-  return ChooseMedium(game, x, y);
 }
 
 // ---- Shared helpers -----------------------------------------------------------
@@ -263,23 +266,15 @@ bool Bot::ChooseWeak(const GameState& game, uint32_t* x, uint32_t* y) {
 
 // ---- Medium -----------------------------------------------------------------
 
-// 1. Every candidate gets a quick score: static heuristic, what it captures
-//    now, and how much it blocks (cells where an opponent would capture).
-// 2. The best few are played out on a copy of the board: what the move wins,
-//    minus the best capture the next player can answer with, plus a bonus
-//    for new capture threats of our own (a fork when there are two).
-bool Bot::ChooseMedium(const GameState& game, uint32_t* x, uint32_t* y) {
-  if (!game.Cells().Count()) return Opening(game, x, y);
+int Bot::RankOnePly(const GameState& game,
+                    const PodVec<Candidate>& candidates, Candidate* top,
+                    int limit) {
   int me = game.CurrentPlayer();
   int next = (me + 1) % game.NumPlayers();
-
-  PodVec<Candidate> candidates;
-  GatherCandidates(game, &candidates);
-  if (!candidates.Size()) return AnyFreeCell(game, x, y);
-
   // Where others would capture now (the next player counts fully, the rest
   // half), and where we would.
   CellMap threat, mine;  // cell -> gain, capped at 250
+
   for (int p = 0; p < game.NumPlayers(); ++p) {
     PodVec<Capture> captures;
     FindCaptures(game, p, &captures);
@@ -296,7 +291,6 @@ bool Bot::ChooseMedium(const GameState& game, uint32_t* x, uint32_t* y) {
     }
   }
 
-  Candidate top[kDeepMoves];
   int numTop = 0;
   for (size_t i = 0; i < candidates.Size(); ++i) {
     Candidate c = candidates[i];
@@ -305,8 +299,29 @@ bool Bot::ChooseMedium(const GameState& game, uint32_t* x, uint32_t* y) {
     c.score = StaticScore(game, me, c.x, c.y, 0) +
               kGainWeight * (own > 0 ? own : 0) +
               kThreatWeight * (blocked > 0 ? blocked : 0);
-    InsertTop(top, &numTop, kDeepMoves, c);
+    InsertTop(top, &numTop, limit, c);
   }
+
+  return numTop;
+}
+
+
+// 1. Every candidate gets a quick score: static heuristic, what it captures
+//    now, and how much it blocks (cells where an opponent would capture).
+// 2. The best few are played out on a copy of the board: what the move wins,
+//    minus the best capture the next player can answer with, plus a bonus
+//    for new capture threats of our own (a fork when there are two).
+bool Bot::ChooseMedium(const GameState& game, uint32_t* x, uint32_t* y) {
+  if (!game.Cells().Count()) return Opening(game, x, y);
+  int me = game.CurrentPlayer();
+  int next = (me + 1) % game.NumPlayers();
+
+  PodVec<Candidate> candidates;
+  GatherCandidates(game, &candidates);
+  if (!candidates.Size()) return AnyFreeCell(game, x, y);
+
+  Candidate top[kDeepMoves];
+  int numTop = RankOnePly(game, candidates, top, kDeepMoves);
 
   // One reply of look-ahead on the best candidates.
   if (game.Cells().Count() <= kMaxDeepCells) {
@@ -376,5 +391,310 @@ bool Bot::ChooseMedium(const GameState& game, uint32_t* x, uint32_t* y) {
   }
   *x = top[pick].x;
   *y = top[pick].y;
+  return true;
+}
+
+// ---- Strong -----------------------------------------------------------------
+
+namespace {
+
+const int kStrongDepth = 4;            // plies: me, reply, me, reply
+const int kStrongRootBeam = 12;        // moves tried at the root
+const int kStrongInnerBeam = 6;        // moves tried at deeper nodes
+const int kStrongNodeBudget = 4000;    // positions played out per move
+const int kStrongPool = 48;            // root candidates reused in the search
+const size_t kMaxStrongCells = 5000;   // above: too slow, plays like medium
+const int kWin = 1000000;
+const int kInfinity = 2000000000;
+const int kMaxPath = 8;
+
+// Evaluation weights (per cell).
+const int kCellValue = 10;       // a cell owned now
+const int kPendingValue = 8;     // capture the player to move will make
+const int kThreatValue = 3;      // each capturing cell (forks count double)
+// An empty cell closer to us than to others, as a divisor: that many such
+// cells are worth one point (a cell owned now is worth kCellValue points).
+// (Chosen by 40-game matches against medium: none 31, 1/4 34, 1/8 36,
+// 1/16 34 wins.)
+const int kInfluenceDivisor = 8;
+const int kInfluenceMargin = 3;  // cells around the action taken into account
+const uint64_t kInfluenceMaxArea = 4096;
+
+}  // namespace
+
+struct Bot::SearchContext {
+  int me;
+  int nodes;
+  int budget;
+  PodVec<uint64_t> pool;  // root candidates, still relevant deeper down
+  uint64_t path[kMaxPath];
+  int pathLen;
+};
+
+namespace {
+
+int OwnAround(const GameState& s, int player, uint32_t x, uint32_t y) {
+  int own = 0;
+  for (int dy = -1; dy <= 1; ++dy) {
+    for (int dx = -1; dx <= 1; ++dx) {
+      int64_t nx = (int64_t)x + dx, ny = (int64_t)y + dy;
+      if ((dx || dy) && nx >= 0 && ny >= 0 && nx < s.Width() &&
+          ny < s.Height() && s.Owner((uint32_t)nx, (uint32_t)ny) == player) {
+        ++own;
+      }
+    }
+  }
+  return own;
+}
+
+// Cells of `me` minus the strongest other player (paranoid view).
+int64_t Material(const GameState& s, int me) {
+  uint64_t other = 0;
+  for (int p = 0; p < s.NumPlayers(); ++p) {
+    if (p != me && s.CellCount(p) > other) other = s.CellCount(p);
+  }
+  return (int64_t)s.CellCount(me) - (int64_t)other;
+}
+
+// Territory estimate: empty cells around the action (bounding box of claimed
+// cells plus a margin) that are closer to `me` than to anyone else, minus
+// those closer to another player. Distance counts steps across cell sides
+// through empty cells, from all claimed cells at once (multi-source BFS).
+int Influence(const GameState& s, int me) {
+  const CellMap& cells = s.Cells();
+  uint32_t x0 = 0xFFFFFFFFu, y0 = 0xFFFFFFFFu, x1 = 0, y1 = 0;
+  for (size_t i = 0; i < cells.Capacity(); ++i) {
+    if (!cells.SlotUsed(i)) continue;
+    uint32_t x = CellKeyX(cells.SlotKey(i)), y = CellKeyY(cells.SlotKey(i));
+    if (x < x0) x0 = x;
+    if (x > x1) x1 = x;
+    if (y < y0) y0 = y;
+    if (y > y1) y1 = y;
+  }
+  if (x0 > x1) return 0;
+  x0 = x0 >= (uint32_t)kInfluenceMargin ? x0 - kInfluenceMargin : 0;
+  y0 = y0 >= (uint32_t)kInfluenceMargin ? y0 - kInfluenceMargin : 0;
+  x1 = x1 + kInfluenceMargin < s.Width() ? x1 + kInfluenceMargin
+                                           : s.Width() - 1;
+  y1 = y1 + kInfluenceMargin < s.Height() ? y1 + kInfluenceMargin
+                                            : s.Height() - 1;
+  uint32_t w = x1 - x0 + 1, h = y1 - y0 + 1;
+  if ((uint64_t)w * h > kInfluenceMaxArea) return 0;
+
+  int area = (int)(w * h);
+  signed char* owner = (signed char*)malloc(area);
+  int* queue = (int*)malloc(area * sizeof(int));
+  if (!owner || !queue) {
+    free(owner);
+    free(queue);
+    return 0;
+  }
+  const signed char kUnseen = -1, kContested = -2;
+  memset(owner, kUnseen, area);
+  unsigned short* dist = (unsigned short*)malloc(area * sizeof(unsigned short));
+  if (!dist) {
+    free(owner);
+    free(queue);
+    return 0;
+  }
+  int head = 0, tail = 0;
+  for (int i = 0; i < area; ++i) {
+    int o = s.Owner(x0 + i % w, y0 + i / w);
+    if (o >= 0) {
+      owner[i] = (signed char)o;
+      dist[i] = 0;
+      queue[tail++] = i;
+    }
+  }
+  int balance = 0;
+  while (head < tail) {
+    int i = queue[head++];
+    int cx = i % w, cy = i / w;
+    for (int d = 0; d < 4; ++d) {
+      int nx = cx + kDX4[d], ny = cy + kDY4[d];
+      if (nx < 0 || ny < 0 || nx >= (int)w || ny >= (int)h) continue;
+      int j = ny * (int)w + nx;
+      if (owner[j] == kUnseen) {
+        owner[j] = owner[i];
+        dist[j] = (unsigned short)(dist[i] + 1);
+        queue[tail++] = j;
+      } else if (dist[j] == dist[i] + 1 && owner[j] != owner[i]) {
+        owner[j] = kContested;  // equally close to two players
+      }
+    }
+  }
+  for (int i = 0; i < area; ++i) {
+    if (dist[i] == 0 || owner[i] < 0) continue;
+    balance += owner[i] == me ? 1 : -1;
+  }
+  free(owner);
+  free(queue);
+  free(dist);
+  return balance;
+}
+
+int ClampScore(int64_t v) {
+  if (v > kWin / 2) return kWin / 2;
+  if (v < -kWin / 2) return -kWin / 2;
+  return (int)v;
+}
+
+}  // namespace
+
+// Candidates of a node: the root pool plus the area around the moves played
+// in the search so far. Captures and blocks are checked on these cells only,
+// which keeps a node cheap; threats elsewhere were already in the pool.
+int Bot::OrderMoves(const GameState& s, SearchContext* ctx, Candidate* out,
+                    int limit, NodeStats* stats) {
+  memset(stats, 0, sizeof(*stats));
+  int mover = s.CurrentPlayer();
+  int next = (mover + 1) % s.NumPlayers();
+
+  CellMap seen;
+  PodVec<Candidate> cands;
+  for (size_t i = 0; i < ctx->pool.Size(); ++i) {
+    uint64_t key = ctx->pool[i];
+    if (s.Cells().Get(key) >= 0 || seen.Get(key) >= 0) continue;
+    seen.Set(key, 1);
+    Candidate c = {CellKeyX(key), CellKeyY(key), 0};
+    cands.Push(c);
+  }
+  for (int i = 0; i < ctx->pathLen; ++i) {
+    AddAround(s, CellKeyX(ctx->path[i]), CellKeyY(ctx->path[i]),
+              kCandidateRadius, &seen, &cands);
+  }
+
+  int count = 0;
+  for (size_t i = 0; i < cands.Size(); ++i) {
+    Candidate c = cands[i];
+    int own = 0;
+    int score = StaticScore(s, mover, c.x, c.y, &own);
+    if (own >= 2) {
+      uint64_t others = 0;
+      uint64_t captured = s.EvaluateClaim(c.x, c.y, mover, &others);
+      if (captured) {
+        int gain = Clamp(captured + others, 100000);
+        score += kGainWeight * gain;
+        ++stats->moverThreats;
+        if (gain > stats->moverBest) stats->moverBest = gain;
+      }
+    }
+    if (OwnAround(s, next, c.x, c.y) >= 2) {
+      uint64_t others = 0;
+      uint64_t captured = s.EvaluateClaim(c.x, c.y, next, &others);
+      if (captured) {
+        int gain = Clamp(captured + others, 100000);
+        score += kThreatWeight * gain;
+        ++stats->nextThreats;
+        if (gain > stats->nextBest) stats->nextBest = gain;
+      }
+    }
+    c.score = score;
+    if (limit > 0) InsertTop(out, &count, limit, c);
+  }
+  return count;
+}
+
+// Static value of a position for ctx.me: cells, the capture the player to
+// move is about to make, and the balance of capture threats (two or more
+// threats against one reply is a fork).
+int Bot::Evaluate(const GameState& s, const SearchContext& ctx,
+                  const NodeStats& stats) {
+  int64_t v = kCellValue * Material(s, ctx.me) +
+              Influence(s, ctx.me) / kInfluenceDivisor;
+  int mover = s.CurrentPlayer();
+  int next = (mover + 1) % s.NumPlayers();
+  if (mover == ctx.me) {
+    v += kPendingValue * stats.moverBest;
+    v += kThreatValue * (stats.moverThreats - stats.nextThreats);
+  } else {
+    v -= kPendingValue * stats.moverBest + kThreatValue * stats.moverThreats;
+    if (next == ctx.me) {
+      v += kThreatValue * stats.nextThreats;
+      // A fork survives the opponent's reply: the second threat stays.
+      if (stats.nextThreats >= 2) v += kPendingValue * 2;
+    }
+  }
+  return ClampScore(v);
+}
+
+int Bot::Search(const GameState& s, int depth, int alpha, int beta,
+                SearchContext* ctx) {
+  if (s.IsGameOver()) {
+    int64_t diff = Material(s, ctx->me);
+    if (diff > 0) return kWin + ClampScore(diff);
+    if (diff < 0) return -kWin + ClampScore(diff);
+    return 0;
+  }
+  NodeStats stats;
+  Candidate moves[kStrongInnerBeam];
+  bool leaf = depth <= 0 || ctx->nodes >= ctx->budget;
+  int n = OrderMoves(s, ctx, moves, leaf ? 0 : kStrongInnerBeam, &stats);
+  if (leaf || !n) return Evaluate(s, *ctx, stats);
+
+  bool maximize = s.CurrentPlayer() == ctx->me;
+  int best = maximize ? -kInfinity : kInfinity;
+  GameState child;
+  for (int i = 0; i < n; ++i) {
+    if (!child.CopyFrom(s)) break;
+    if (!child.TryClaimCell(moves[i].x, moves[i].y).accepted) continue;
+    ++ctx->nodes;
+    bool pushed = ctx->pathLen < kMaxPath;
+    if (pushed) ctx->path[ctx->pathLen++] = MakeCellKey(moves[i].x, moves[i].y);
+    int v = Search(child, depth - 1, alpha, beta, ctx);
+    if (pushed) --ctx->pathLen;
+    if (maximize) {
+      if (v > best) best = v;
+      if (best > alpha) alpha = best;
+    } else {
+      if (v < best) best = v;
+      if (best < beta) beta = best;
+    }
+    if (alpha >= beta) break;
+  }
+  if (best == kInfinity || best == -kInfinity) return Evaluate(s, *ctx, stats);
+  return best;
+}
+
+bool Bot::ChooseStrong(const GameState& game, uint32_t* x, uint32_t* y) {
+  if (!game.Cells().Count()) return Opening(game, x, y);
+  if (game.Cells().Count() > kMaxStrongCells) return ChooseMedium(game, x, y);
+
+  PodVec<Candidate> candidates;
+  GatherCandidates(game, &candidates);
+  if (!candidates.Size()) return AnyFreeCell(game, x, y);
+
+  Candidate pool[kStrongPool];
+  int poolSize = RankOnePly(game, candidates, pool, kStrongPool);
+
+  SearchContext ctx;
+  ctx.me = game.CurrentPlayer();
+  ctx.nodes = 0;
+  ctx.budget = kStrongNodeBudget;
+  ctx.pathLen = 0;
+  for (int i = 0; i < poolSize; ++i) {
+    ctx.pool.Push(MakeCellKey(pool[i].x, pool[i].y));
+  }
+
+  int rootMoves = poolSize < kStrongRootBeam ? poolSize : kStrongRootBeam;
+  int alpha = -kInfinity;
+  int bestIndex = 0, bestValue = -kInfinity;
+  GameState child;
+  for (int i = 0; i < rootMoves; ++i) {
+    if (!child.CopyFrom(game)) break;
+    if (!child.TryClaimCell(pool[i].x, pool[i].y).accepted) continue;
+    ++ctx.nodes;
+    ctx.path[0] = MakeCellKey(pool[i].x, pool[i].y);
+    ctx.pathLen = 1;
+    int v = Search(child, kStrongDepth - 1, alpha, kInfinity, &ctx);
+    // Equal values: keep some variety between games.
+    if (v > bestValue || (v == bestValue && Random(2))) {
+      bestValue = v;
+      bestIndex = i;
+    }
+    if (v > alpha) alpha = v;
+  }
+  *x = pool[bestIndex].x;
+  *y = pool[bestIndex].y;
   return true;
 }
