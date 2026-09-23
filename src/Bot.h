@@ -75,12 +75,15 @@ class Bot {
 
   // Candidates ranked by static score, what they capture now and what they
   // block (captures of others); the best `limit` go to `top`.
+  // With influenceDivisor > 0 (search levels) the change of the territory
+  // estimate counts as well.
   int RankOnePly(const GameState& game, const PodVec<Candidate>& candidates,
-                 Candidate* top, int limit);
+                 Candidate* top, int limit, int influenceDivisor);
 
   bool Opening(const GameState& game, uint32_t* x, uint32_t* y);
   bool AnyFreeCell(const GameState& game, uint32_t* x, uint32_t* y);
-  void GatherCandidates(const GameState& game, PodVec<Candidate>* out);
+  void GatherCandidates(const GameState& game, PodVec<Candidate>* out,
+                        int radius = 2);
   void AddAround(const GameState& game, uint32_t cx, uint32_t cy, int radius,
                  CellMap* seen, PodVec<Candidate>* out);
   void FindCaptures(const GameState& game, int player, PodVec<Capture>* out);

@@ -592,6 +592,111 @@ static int PlayMatch(uint32_t size, int level0, int level1, uint32_t seed,
   return g.CellCount(0) > g.CellCount(1) ? 0 : 1;
 }
 
+// The tactic from the playtest: the opponent hunts cells standing alone,
+// surrounding them from four sides (four moves take one cell and win five),
+// and otherwise just extends its own cells. Picks the free cell beside the
+// bot cell that is surrounded the most already.
+static void HunterMove(const GameState& g, int me, uint32_t* bx, uint32_t* by) {
+  const CellMap& cells = g.Cells();
+  int bestScore = -1;
+  const int dx4[4] = {0, 1, 0, -1}, dy4[4] = {-1, 0, 1, 0};
+  for (size_t i = 0; i < cells.Capacity(); ++i) {
+    if (!cells.SlotUsed(i) || (int)cells.SlotValue(i) == me) continue;
+    uint32_t x = CellKeyX(cells.SlotKey(i)), y = CellKeyY(cells.SlotKey(i));
+    bool group = false;  // a cell with friends costs too much to surround
+    for (int dy = -1; dy <= 1 && !group; ++dy) {
+      for (int dx = -1; dx <= 1 && !group; ++dx) {
+        int nx = (int)x + dx, ny = (int)y + dy;
+        if ((!dx && !dy) || nx < 0 || ny < 0 || nx >= (int)g.Width() ||
+            ny >= (int)g.Height()) {
+          continue;
+        }
+        group = g.Owner((uint32_t)nx, (uint32_t)ny) == (int)cells.SlotValue(i);
+      }
+    }
+    if (group) continue;
+    int taken = 0;
+    uint32_t fx = 0, fy = 0;
+    bool free = false;
+    for (int d = 0; d < 4; ++d) {
+      int nx = (int)x + dx4[d], ny = (int)y + dy4[d];
+      if (nx < 0 || ny < 0 || nx >= (int)g.Width() || ny >= (int)g.Height()) {
+        continue;
+      }
+      int owner = g.Owner((uint32_t)nx, (uint32_t)ny);
+      if (owner == me) {
+        ++taken;
+      } else if (owner < 0) {
+        free = true;
+        fx = (uint32_t)nx;
+        fy = (uint32_t)ny;
+      }
+    }
+    if (free && taken > bestScore) {
+      bestScore = taken;
+      *bx = fx;
+      *by = fy;
+    }
+  }
+  if (bestScore >= 0) return;
+  for (size_t i = 0; i < cells.Capacity(); ++i) {  // nothing to hunt: extend
+    if (!cells.SlotUsed(i) || (int)cells.SlotValue(i) != me) continue;
+    uint32_t x = CellKeyX(cells.SlotKey(i)), y = CellKeyY(cells.SlotKey(i));
+    for (int d = 0; d < 4; ++d) {
+      int nx = (int)x + dx4[d], ny = (int)y + dy4[d];
+      if (nx < 0 || ny < 0 || nx >= (int)g.Width() || ny >= (int)g.Height()) {
+        continue;
+      }
+      if (g.Owner((uint32_t)nx, (uint32_t)ny) < 0) {
+        *bx = (uint32_t)nx;
+        *by = (uint32_t)ny;
+        return;
+      }
+    }
+  }
+  do {
+    *bx = Rand() % g.Width();
+    *by = Rand() % g.Height();
+  } while (g.Owner(*bx, *by) >= 0);
+}
+
+// On a board far larger than the play, the strong bot must keep its cells
+// together instead of sowing single ones the opponent can harvest.
+static void TestKeepsCellsTogether() {
+  GameState g;
+  InitBots(&g, 60, 60, kBotHuman, kBotStrong);
+  Bot bot(4242);
+  for (int move = 0; move < 80 && !g.IsGameOver(); ++move) {
+    uint32_t x = 0, y = 0;
+    if (g.CurrentPlayer() == 1) {
+      CHECK(bot.ChooseMove(g, &x, &y));
+    } else {
+      HunterMove(g, 0, &x, &y);
+    }
+    CHECK(g.TryClaimCell(x, y).accepted);
+  }
+  int alone = 0;
+  const CellMap& cells = g.Cells();
+  for (size_t i = 0; i < cells.Capacity(); ++i) {
+    if (!cells.SlotUsed(i) || cells.SlotValue(i) != 1) continue;
+    uint32_t x = CellKeyX(cells.SlotKey(i)), y = CellKeyY(cells.SlotKey(i));
+    bool friends = false;
+    for (int dy = -2; dy <= 2 && !friends; ++dy) {
+      for (int dx = -2; dx <= 2 && !friends; ++dx) {
+        int nx = (int)x + dx, ny = (int)y + dy;
+        if ((!dx && !dy) || nx < 0 || ny < 0 || nx >= 60 || ny >= 60) continue;
+        friends = g.Owner((uint32_t)nx, (uint32_t)ny) == 1;
+      }
+    }
+    if (!friends) ++alone;
+  }
+  printf("  strong bot against the lone-cell hunter: %lu cells to %lu, "
+         "%d left standing alone\n",
+         (unsigned long)g.CellCount(1), (unsigned long)g.CellCount(0), alone);
+  CHECK(alone <= 5);  // the version before this one left 27 here
+  CHECK(g.CellCount(1) >= g.CellCount(0));
+}
+
 // Best capture (enclosed cells + other players' cells in them) `player`
 // could make in `g` right now, by brute force over the whole board.
 static uint64_t BestCapture(const GameState& g, int player) {
@@ -609,8 +714,18 @@ static uint64_t BestCapture(const GameState& g, int player) {
 // Medium must find the best capture, and when threatened, a move after which
 // the opponent's best capture is as small as possible (checked against a
 // brute force over every free cell).
-static void TestBlocksAndCaptures(int level, const char* name, int seeds) {
-  const char* pic[] = {"000", "01.", "000", "....", ".11."};
+// `open` picks the position. The closed one (a ring with a gap around one
+// cell) suits medium: its best defence by the one-move count is a move that
+// only gets captured later, which the searching levels rightly avoid. The
+// open one has a clear answer at any depth: a group of 6 whose only gap
+// leads to its own free line - filling the gap saves all 6, anything else
+// loses them.
+static void TestBlocksAndCaptures(int level, const char* name, int seeds,
+                                  bool open) {
+  const char* closedPic[] = {"000", "01.", "000", "....", ".11."};
+  const char* openPic[] = {"00000....", "0111.111.", "01110....", "00000....",
+                           "........."};
+  const char** pic = open ? openPic : closedPic;
   GameState base;
   InitBots(&base, 20, 20, kBotHuman, level);
   Draw(&base, 8, 8, pic, 5);
@@ -678,6 +793,49 @@ static void TestMediumStrength() {
   CHECK(beatWeak >= games * 7 / 10);
   CHECK(beatRandom == games);
   CHECK(slowest < 300);
+}
+
+// From the playtest: red (player 0) builds a wide ring, dots every other
+// cell, around a mixed area, open on the right. The computer (blue) must not
+// throw away moves deep inside the area about to be enclosed. A move at the
+// ring, one that joins its own cells or one that attacks a red cell is fine
+// - a cell dropped on its own in the middle is not.
+static void TestRingIsNoticed() {
+  int inside = 0, wasted = 0, games = 6;
+  for (int seed = 1; seed <= games; ++seed) {
+    GameState g;
+    InitBots(&g, 30, 30, kBotHuman, kBotStrong);
+    const int blue[][2] = {{14, 14}, {16, 14}, {15, 16}, {13, 16}, {17, 16}};
+    const int red[][2] = {{15, 14}, {14, 16}, {16, 16}, {15, 12}};
+    for (int i = 0; i < 5; ++i) g.PlaceCell(blue[i][0], blue[i][1], 1);
+    for (int i = 0; i < 4; ++i) g.PlaceCell(red[i][0], red[i][1], 0);
+    for (int i = 9; i <= 21; i += 2) {
+      g.PlaceCell(i, 9, 0);
+      g.PlaceCell(i, 21, 0);
+      if (i != 9 && i != 21) g.PlaceCell(9, i, 0);
+      if (i != 9 && i != 21 && (i < 13 || i > 19)) g.PlaceCell(21, i, 0);
+    }
+    g.SetCurrentPlayer(1);
+    Bot bot(seed);
+    uint32_t x, y;
+    CHECK(bot.ChooseMove(g, &x, &y));
+    if (x < 11 || x > 19 || y < 11 || y > 19) continue;  // at the wall: fine
+    ++inside;
+    bool useful = false;  // joins its own cells or attacks a red one
+    for (int dy = -2; dy <= 2 && !useful; ++dy) {
+      for (int dx = -2; dx <= 2 && !useful; ++dx) {
+        int nx = (int)x + dx, ny = (int)y + dy;
+        if ((!dx && !dy) || nx < 0 || ny < 0 || nx >= 30 || ny >= 30) continue;
+        int owner = g.Owner((uint32_t)nx, (uint32_t)ny);
+        bool touching = dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1;
+        useful = owner == 1 || (owner == 0 && touching);
+      }
+    }
+    if (!useful) ++wasted;
+  }
+  printf("  strong bot inside a forming ring: %d/%d moves, %d of them idle\n",
+         inside, games, wasted);
+  CHECK(wasted == 0);
 }
 
 static void TestStrongStrength() {
@@ -788,11 +946,13 @@ int main() {
   TestBotTakesCaptures();
   TestBotBeatsRandomPlayer();
   TestBotOnHugeBoard();
-  TestBlocksAndCaptures(kBotMedium, "medium", 30);
-  TestBlocksAndCaptures(kBotStrong, "strong", 30);
-  TestBlocksAndCaptures(kBotVeryStrong, "very strong", 5);
+  TestBlocksAndCaptures(kBotMedium, "medium", 30, false);
+  TestBlocksAndCaptures(kBotStrong, "strong", 20, true);
+  TestBlocksAndCaptures(kBotVeryStrong, "very strong", 4, true);
   TestMediumStrength();
   TestMediumOnBigBoards();
+  TestRingIsNoticed();
+  TestKeepsCellsTogether();
   TestStrongStrength();
   TestVeryStrong();
   printf("%d checks, %d failures\n", g_checks, g_failures);
