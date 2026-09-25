@@ -1,4 +1,4 @@
-// "Нова гра" dialog: board size, player count, player names and colors.
+// "New game" dialog: board size, player count, player names and colors.
 #pragma once
 
 #include <windows.h>

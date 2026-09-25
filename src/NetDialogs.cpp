@@ -25,15 +25,15 @@ void AddButtons(HWND dlg, HFONT font, const wchar_t* okText, int y) {
   int cancelX = kClientWidth - kMargin - 100;
   AddControl(dlg, font, L"BUTTON", okText, BS_DEFPUSHBUTTON | WS_TABSTOP, 0,
              cancelX - 8 - 120, y, 120, kButtonHeight, IDOK);
-  AddControl(dlg, font, L"BUTTON", L"Скасувати", BS_PUSHBUTTON | WS_TABSTOP, 0,
-             cancelX, y, 100, kButtonHeight, IDCANCEL);
+  AddControl(dlg, font, L"BUTTON", Tr(kStrCancel), BS_PUSHBUTTON | WS_TABSTOP,
+             0, cancelX, y, 100, kButtonHeight, IDCANCEL);
 }
 
 bool ReadPort(HWND dlg, uint16_t* port) {
   BOOL ok;
   UINT value = GetDlgItemInt(dlg, IDC_PORT, &ok, FALSE);
   if (!ok || value < 1 || value > 65535) {
-    MessageBoxW(dlg, L"Порт має бути числом від 1 до 65535.", L"Мережева гра",
+    MessageBoxW(dlg, Tr(kStrBadPort), Tr(kStrNetworkGame),
                 MB_OK | MB_ICONWARNING);
     SetFocus(GetDlgItem(dlg, IDC_PORT));
     return false;
@@ -56,24 +56,23 @@ INT_PTR CALLBACK ConnectProc(HWND dlg, UINT msg, WPARAM wParam,
     case WM_INITDIALOG: {
       data = (ConnectData*)lParam;
       SetWindowLongPtrW(dlg, DWLP_USER, (LONG_PTR)data);
-      SetWindowTextW(dlg, L"Приєднатися до мережевої гри");
+      SetWindowTextW(dlg, Tr(kStrConnectTitle));
       HFONT f = data->font;
-      AddControl(dlg, f, L"STATIC",
-                 L"Адреса комп'ютера, що створив гру (наприклад, 192.168.1.10):",
-                 SS_LEFT, 0, kMargin, 12, kClientWidth - 2 * kMargin, 20, -1);
-      AddControl(dlg, f, L"STATIC", L"IP-адреса:", SS_LEFT, 0, kMargin, 44,
-                 kLabelWidth, 20, -1);
+      AddControl(dlg, f, L"STATIC", Tr(kStrConnectInfo), SS_LEFT, 0, kMargin,
+                 12, kClientWidth - 2 * kMargin, 20, -1);
+      AddControl(dlg, f, L"STATIC", Tr(kStrIpAddressLabel), SS_LEFT, 0,
+                 kMargin, 44, kLabelWidth, 20, -1);
       HWND address = AddControl(dlg, f, L"EDIT", data->settings->address,
                                 ES_AUTOHSCROLL | WS_TABSTOP, WS_EX_CLIENTEDGE,
                                 kFieldX, 41, 170, 23, IDC_ADDRESS);
       SendMessageW(address, EM_LIMITTEXT, 63, 0);
-      AddControl(dlg, f, L"STATIC", L"Порт:", SS_LEFT, 0, kMargin, 78,
+      AddControl(dlg, f, L"STATIC", Tr(kStrPortLabel), SS_LEFT, 0, kMargin, 78,
                  kLabelWidth, 20, -1);
       HWND port = AddControl(dlg, f, L"EDIT", L"", ES_NUMBER | WS_TABSTOP,
                              WS_EX_CLIENTEDGE, kFieldX, 75, 80, 23, IDC_PORT);
       SendMessageW(port, EM_LIMITTEXT, 5, 0);
       SetDlgItemInt(dlg, IDC_PORT, data->settings->port, FALSE);
-      AddButtons(dlg, f, L"Приєднатися", 116);
+      AddButtons(dlg, f, Tr(kStrJoin), 116);
       SizeDialog(dlg, kClientWidth, 116 + kButtonHeight + kMargin, true);
       SetFocus(address);
       SendMessageW(address, EM_SETSEL, 0, -1);
@@ -84,8 +83,8 @@ INT_PTR CALLBACK ConnectProc(HWND dlg, UINT msg, WPARAM wParam,
         wchar_t address[64];
         GetDlgItemTextW(dlg, IDC_ADDRESS, address, 64);
         if (!address[0]) {
-          MessageBoxW(dlg, L"Введіть IP-адресу комп'ютера, що створив гру.",
-                      L"Мережева гра", MB_OK | MB_ICONWARNING);
+          MessageBoxW(dlg, Tr(kStrEnterAddress), Tr(kStrNetworkGame),
+                      MB_OK | MB_ICONWARNING);
           SetFocus(GetDlgItem(dlg, IDC_ADDRESS));
           return TRUE;
         }
@@ -126,8 +125,8 @@ INT_PTR CALLBACK SetupProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM lParam) {
         y += 44;
       }
       if (req->askPort) {
-        AddControl(dlg, f, L"STATIC", L"Порт:", SS_LEFT, 0, kMargin, y + 3,
-                   kLabelWidth, 20, -1);
+        AddControl(dlg, f, L"STATIC", Tr(kStrPortLabel), SS_LEFT, 0, kMargin,
+                   y + 3, kLabelWidth, 20, -1);
         HWND port = AddControl(dlg, f, L"EDIT", L"", ES_NUMBER | WS_TABSTOP,
                                WS_EX_CLIENTEDGE, kFieldX, y, 80, 23, IDC_PORT);
         SendMessageW(port, EM_LIMITTEXT, 5, 0);
@@ -137,8 +136,8 @@ INT_PTR CALLBACK SetupProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM lParam) {
 
       HWND focus = 0;
       if (req->chooseSlot) {
-        AddControl(dlg, f, L"STATIC", L"Оберіть, за кого грати:", SS_LEFT, 0,
-                   kMargin, y, kClientWidth - 2 * kMargin, 20, -1);
+        AddControl(dlg, f, L"STATIC", Tr(kStrChooseWhom), SS_LEFT, 0, kMargin,
+                   y, kClientWidth - 2 * kMargin, 20, -1);
         y += 24;
         int count = 0;
         for (int i = 0; i < req->numSlots; ++i) count += req->available[i];
@@ -162,8 +161,8 @@ INT_PTR CALLBACK SetupProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM lParam) {
         y += listHeight + 12;
       }
 
-      AddControl(dlg, f, L"STATIC", L"Ваше ім'я:", SS_LEFT, 0, kMargin, y + 3,
-                 kLabelWidth, 20, -1);
+      AddControl(dlg, f, L"STATIC", Tr(kStrYourName), SS_LEFT, 0, kMargin,
+                 y + 3, kLabelWidth, 20, -1);
       HWND name = AddControl(dlg, f, L"EDIT", data->player.name,
                              ES_AUTOHSCROLL | WS_TABSTOP, WS_EX_CLIENTEDGE,
                              kFieldX, y, 200, 23, IDC_NAME);
@@ -176,8 +175,8 @@ INT_PTR CALLBACK SetupProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM lParam) {
       }
 
       if (!req->chooseSlot) {
-        AddControl(dlg, f, L"STATIC", L"Колір:", SS_LEFT, 0, kMargin, y + 4,
-                   kLabelWidth, 20, -1);
+        AddControl(dlg, f, L"STATIC", Tr(kStrColorLabel), SS_LEFT, 0, kMargin,
+                   y + 4, kLabelWidth, 20, -1);
         AddControl(dlg, f, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, 0,
                    kFieldX, y, 76, 25, IDC_COLOR);
         y += 36;
@@ -211,7 +210,7 @@ INT_PTR CALLBACK SetupProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM lParam) {
           int index =
               (int)SendDlgItemMessageW(dlg, IDC_SLOTS, LB_GETCURSEL, 0, 0);
           if (index < 0) {
-            MessageBoxW(dlg, L"Оберіть гравця зі списку.", req->title,
+            MessageBoxW(dlg, Tr(kStrPickFromList), req->title,
                         MB_OK | MB_ICONWARNING);
             return TRUE;
           }
@@ -221,10 +220,8 @@ INT_PTR CALLBACK SetupProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM lParam) {
         } else {
           for (int i = 0; i < req->numTaken; ++i) {
             if (req->taken[i] == data->player.color) {
-              MessageBoxW(dlg,
-                          L"Цей колір уже зайнятий іншим гравцем.\n"
-                          L"Оберіть інший колір.",
-                          req->title, MB_OK | MB_ICONWARNING);
+              MessageBoxW(dlg, Tr(kStrColorTakenByOther), req->title,
+                          MB_OK | MB_ICONWARNING);
               return TRUE;
             }
           }

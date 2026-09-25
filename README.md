@@ -1,15 +1,15 @@
 # Feodals
 
 A turn-based territory capture game for 2–8 players, either hot-seat on one computer or over a network.
-Plain C++ and the Win32 API, no third-party libraries. The game UI is in Ukrainian.
+Plain C++ and the Win32 API, no third-party libraries. The game UI is in Ukrainian and English, switchable at any time.
 Specification (Ukrainian): [working_assets/feodals-spec.md](working_assets/feodals-spec.md).
 
 ## Building
 
 | Toolchain | Command | Output |
 |---|---|---|
-| MinGW g++ (32-bit) | `build_mingw.bat` | `build\Feodals.exe` (~120 KB, Windows XP and later) |
-| MSVC (32-bit) | `build_msvc.bat` | `build\Feodals_msvc.exe` (~159 KB) |
+| MinGW g++ (32-bit) | `build_mingw.bat` | `build\Feodals.exe` (~134 KB, Windows XP and later) |
+| MSVC (32-bit) | `build_msvc.bat` | `build\Feodals_msvc.exe` (~175 KB) |
 | Tests (MinGW) | `tests\build_tests.bat` | builds and runs `build\test_game.exe` (rules, saves, computer player) and `build\test_net.exe` (networking over 127.0.0.1) |
 
 `build_msvc.bat` locates Visual Studio via `vswhere`. An MSVC build for Windows XP needs the `v141_xp` toolset and `/SUBSYSTEM:WINDOWS,5.01`; newer toolsets produce binaries for Vista/7 and later.
@@ -24,6 +24,7 @@ The executable depends only on system DLLs (`user32`, `gdi32`, `kernel32`, `comd
 ## How to play
 
 - The program starts with a 30×30 game for two players. Start another one or load a save from the «Гра» (Game) menu.
+- **Language:** the «Мова» (Language) menu switches the whole interface between Ukrainian and English on the fly, even in the middle of a game. The choice is remembered in `feodals.ini` next to the executable; the first start is in Ukrainian. Player names that were never edited («Гравець 2», "Player 2") are shown in the current language, in saves and network games too, so every player sees them in their own language; a name someone typed stays as it is.
 - **Playing against the computer:** in the new game dialog every player is either «Людина» (a person) or «Комп'ютер» (the computer) with a difficulty level: weak, medium, strong, very strong. All four levels are available. The very strong one thinks for up to several seconds per move; the window stays responsive meanwhile (the computer thinks on a separate thread). The computer moves by itself about 0.4 s after the previous move. Computer players exist only in local games, not in network ones.
 - **Left click** an unclaimed cell to claim it. The turn then passes to the next player.
 - **Encirclement:** when your cells close off an area (unclaimed and/or opponents' cells), the whole area becomes yours. As with dots on paper, cells touching only at corners also form a wall. Territory inside connects only through cell sides. The board edge is not a wall.
@@ -32,7 +33,7 @@ The executable depends only on system DLLs (`user32`, `gdi32`, `kernel32`, `comd
 - Shortcuts: Ctrl+N (new game), Ctrl+S (save), Ctrl+Shift+S (save as), Ctrl+O (load), F1 (rules).
 - Saves go to the `saves\` folder next to the executable. The `.feo` format is described in [src/SaveManager.h](src/SaveManager.h).
 - A new game on a board larger than the window starts scrolled to the middle of the board.
-- The «Показувати останній хід» (show last move) checkbox in the side panel draws a frame around the cell of the last move. It only affects the current window (in a network game each player sets it for themselves) and is not saved with the game.
+- The «Показувати останній хід» (Show the last move) checkbox in the side panel draws a frame around the cell of the last move. It is on when the program starts, only affects the current window (in a network game each player sets it for themselves) and is not saved with the game.
 
 ## Network game
 
@@ -62,6 +63,8 @@ How it works: TCP (IPv4, Winsock 2), events via `WSAAsyncSelect` in the regular 
 | [src/NetGame.*](src/NetGame.h) | Network session: server/client, lobby, move exchange, pause and reconnection |
 | [src/NetDialogs.*](src/NetDialogs.h), [src/DialogKit.*](src/DialogKit.h) | Connect and player-selection dialogs, shared dialog building blocks |
 | [src/NewGameDialog.*](src/NewGameDialog.h) | "New game" dialog. The template is built in memory, so no `.rc` is needed for it |
+| [src/Lang.*](src/Lang.h), [src/Strings.inc](src/Strings.inc) | Interface languages. Every text lives in `Strings.inc` with its Ukrainian and English version side by side; a test checks that both exist and that format strings take the same arguments |
+| [src/UiCommon.*](src/UiCommon.h) | Fonts, palette, number formatting and plurals for the current language, default player names |
 | [src/main.cpp](src/main.cpp) | `WinMain`, main window, board, side panel, menu |
 
 ### Computer player

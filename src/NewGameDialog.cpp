@@ -21,14 +21,14 @@ enum {
 
 struct Preset {
   uint32_t width, height;
-  const wchar_t* label;
+  const wchar_t* label;  // 0: "Custom" in the current language
 };
 
 const Preset kPresets[] = {
     {10, 10, L"10 × 10"},     {20, 20, L"20 × 20"},
     {30, 30, L"30 × 30"},     {50, 50, L"50 × 50"},
     {100, 100, L"100 × 100"}, {1000, 1000, L"1000 × 1000"},
-    {0, 0, L"Своє"},
+    {0, 0, 0},
 };
 const int kNumPresets = sizeof(kPresets) / sizeof(kPresets[0]);
 const int kCustomPreset = kNumPresets - 1;
@@ -78,7 +78,7 @@ void ReadNames(HWND dlg, DialogData* data) {
 }
 
 // Switching between a person and the computer also switches an untouched
-// default name ("Гравець N" <-> "Комп'ютер N").
+// default name ("Player N" <-> "Computer N").
 void OnKindChanged(HWND dlg, int player) {
   wchar_t name[kMaxNameLen], human[kMaxNameLen], bot[kMaxNameLen];
   GetDlgItemTextW(dlg, IDC_NAME0 + player, name, kMaxNameLen);
@@ -153,17 +153,19 @@ void CreateControls(HWND dlg, DialogData* data) {
   const DWORD label = SS_LEFT;
   const DWORD tab = WS_TABSTOP;
 
-  AddControl(dlg, f, L"STATIC", L"Розмір поля:", label, 0, kMargin, 15,
+  AddControl(dlg, f, L"STATIC", Tr(kStrBoardSizeLabel), label, 0, kMargin, 15,
              kLabelWidth, 20, -1);
   HWND preset = AddControl(dlg, f, L"COMBOBOX", L"",
                            CBS_DROPDOWNLIST | WS_VSCROLL | tab, 0, kFieldX, 12,
                            150, 240, IDC_PRESET);
   for (int i = 0; i < kNumPresets; ++i) {
-    SendMessageW(preset, CB_ADDSTRING, 0, (LPARAM)kPresets[i].label);
+    const wchar_t* text =
+        kPresets[i].label ? kPresets[i].label : Tr(kStrCustomSize);
+    SendMessageW(preset, CB_ADDSTRING, 0, (LPARAM)text);
   }
 
-  AddControl(dlg, f, L"STATIC", L"Ширина × висота:", label, 0, kMargin, 49,
-             kLabelWidth, 20, -1);
+  AddControl(dlg, f, L"STATIC", Tr(kStrWidthHeightLabel), label, 0, kMargin,
+             49, kLabelWidth, 20, -1);
   HWND width = AddControl(dlg, f, L"EDIT", L"", ES_NUMBER | ES_AUTOHSCROLL | tab,
                           WS_EX_CLIENTEDGE, kFieldX, 46, 80, 23, IDC_WIDTH);
   AddControl(dlg, f, L"STATIC", L"×", SS_CENTER, 0, kFieldX + 80, 49, 20, 20,
@@ -174,8 +176,8 @@ void CreateControls(HWND dlg, DialogData* data) {
   SendMessageW(width, EM_LIMITTEXT, 7, 0);
   SendMessageW(height, EM_LIMITTEXT, 7, 0);
 
-  AddControl(dlg, f, L"STATIC", L"Кількість гравців:", label, 0, kMargin, 84,
-             kLabelWidth, 20, -1);
+  AddControl(dlg, f, L"STATIC", Tr(kStrPlayerCountLabel), label, 0, kMargin,
+             84, kLabelWidth, 20, -1);
   HWND count = AddControl(dlg, f, L"COMBOBOX", L"",
                           CBS_DROPDOWNLIST | WS_VSCROLL | tab, 0, kFieldX, 81,
                           80, 240, IDC_COUNT);
@@ -187,7 +189,7 @@ void CreateControls(HWND dlg, DialogData* data) {
 
   int separatorTop = kSeparatorTop;
   if (data->network) {
-    AddControl(dlg, f, L"STATIC", L"Порт:", label, 0, kMargin, 118,
+    AddControl(dlg, f, L"STATIC", Tr(kStrPortLabel), label, 0, kMargin, 118,
                kLabelWidth, 20, -1);
     HWND port = AddControl(dlg, f, L"EDIT", L"", ES_NUMBER | tab,
                            WS_EX_CLIENTEDGE, kFieldX, 115, 80, 23, IDC_PORT);
@@ -202,8 +204,8 @@ void CreateControls(HWND dlg, DialogData* data) {
     int y = PlayersTop(data) + i * kRowHeight;
     wchar_t number[8];
     wsprintfW(number, L"%d.", i + 1);
-    AddControl(dlg, f, L"STATIC", data->network ? L"Ви:" : number, SS_RIGHT,
-               0, kMargin, y + 5, 26, 20, IDC_LABEL0 + i);
+    AddControl(dlg, f, L"STATIC", data->network ? Tr(kStrYouLabel) : number,
+               SS_RIGHT, 0, kMargin, y + 5, 26, 20, IDC_LABEL0 + i);
     HWND name = AddControl(dlg, f, L"EDIT", data->work.players[i].name,
                            ES_AUTOHSCROLL | tab, WS_EX_CLIENTEDGE,
                            kMargin + 30, y + 2, 160, 23, IDC_NAME0 + i);
@@ -212,7 +214,7 @@ void CreateControls(HWND dlg, DialogData* data) {
                            CBS_DROPDOWNLIST | WS_VSCROLL | tab, 0,
                            kMargin + 196, y + 1, 176, 240, IDC_KIND0 + i);
     for (int k = 0; k < kBotLevelCount; ++k) {
-      SendMessageW(kind, CB_ADDSTRING, 0, (LPARAM)kBotLevelNames[k]);
+      SendMessageW(kind, CB_ADDSTRING, 0, (LPARAM)BotLevelName(k));
     }
     int level = data->work.players[i].botLevel;
     SendMessageW(kind, CB_SETCURSEL,
@@ -221,9 +223,10 @@ void CreateControls(HWND dlg, DialogData* data) {
                kClientWidth - kMargin - 76, y + 1, 76, 25, IDC_COLOR0 + i);
   }
 
-  AddControl(dlg, f, L"BUTTON", data->network ? L"Створити" : L"Почати гру",
+  AddControl(dlg, f, L"BUTTON",
+             data->network ? Tr(kStrCreate) : Tr(kStrStartGame),
              BS_DEFPUSHBUTTON | tab, 0, 0, 0, 110, kButtonHeight, IDOK);
-  AddControl(dlg, f, L"BUTTON", L"Скасувати", BS_PUSHBUTTON | tab, 0, 0, 0,
+  AddControl(dlg, f, L"BUTTON", Tr(kStrCancel), BS_PUSHBUTTON | tab, 0, 0, 0,
              100, kButtonHeight, IDCANCEL);
 
   data->updatingSize = true;
@@ -251,9 +254,8 @@ bool Validate(HWND dlg, DialogData* data) {
   UINT h = GetDlgItemInt(dlg, IDC_HEIGHT, &okH, FALSE);
   if (!okW || !okH || w < kMinBoardSize || h < kMinBoardSize ||
       w > kMaxBoardSize || h > kMaxBoardSize) {
-    MessageBoxW(dlg,
-                L"Ширина й висота поля мають бути від 10 до 1 000 000.",
-                L"Нова гра", MB_OK | MB_ICONWARNING);
+    MessageBoxW(dlg, Tr(kStrBadBoardSize), Tr(kStrNewGame),
+                MB_OK | MB_ICONWARNING);
     SetFocus(GetDlgItem(dlg, okW && w >= kMinBoardSize && w <= kMaxBoardSize
                                  ? IDC_HEIGHT
                                  : IDC_WIDTH));
@@ -263,7 +265,7 @@ bool Validate(HWND dlg, DialogData* data) {
   BOOL okPort = TRUE;
   UINT port = data->network ? GetDlgItemInt(dlg, IDC_PORT, &okPort, FALSE) : 0;
   if (data->network && (!okPort || port < 1 || port > 65535)) {
-    MessageBoxW(dlg, L"Порт має бути числом від 1 до 65535.", L"Мережева гра",
+    MessageBoxW(dlg, Tr(kStrBadPort), Tr(kStrNetworkGame),
                 MB_OK | MB_ICONWARNING);
     SetFocus(GetDlgItem(dlg, IDC_PORT));
     return false;
@@ -282,22 +284,16 @@ bool Validate(HWND dlg, DialogData* data) {
     for (int j = 0; j < i; ++j) {
       if (data->work.players[i].color == data->work.players[j].color) {
         wchar_t msg[160];
-        wsprintfW(msg,
-                  L"Гравці %d і %d мають однаковий колір.\n"
-                  L"Оберіть кожному гравцю інший колір.",
-                  j + 1, i + 1);
-        MessageBoxW(dlg, msg, L"Нова гра", MB_OK | MB_ICONWARNING);
+        wsprintfW(msg, Tr(kStrSameColors), j + 1, i + 1);
+        MessageBoxW(dlg, msg, Tr(kStrNewGame), MB_OK | MB_ICONWARNING);
         SetFocus(GetDlgItem(dlg, IDC_COLOR0 + i));
         return false;
       }
     }
     if (data->work.players[i].color == kEmptyCellColor) {
       wchar_t msg[160];
-      wsprintfW(msg,
-                L"Колір гравця %d збігається з кольором порожніх клітинок.\n"
-                L"Оберіть інший колір.",
-                i + 1);
-      MessageBoxW(dlg, msg, L"Нова гра", MB_OK | MB_ICONWARNING);
+      wsprintfW(msg, Tr(kStrPlayerColorIsEmpty), i + 1);
+      MessageBoxW(dlg, msg, Tr(kStrNewGame), MB_OK | MB_ICONWARNING);
       SetFocus(GetDlgItem(dlg, IDC_COLOR0 + i));
       return false;
     }
@@ -306,13 +302,8 @@ bool Validate(HWND dlg, DialogData* data) {
   if ((uint64_t)w * h > kLargeBoardCells) {
     wchar_t cells[32], msg[400];
     FormatCount((uint64_t)w * h, cells);
-    wsprintfW(msg,
-              L"Поле %u × %u містить %s клітинок.\n\n"
-              L"Порожні клітинки не займають пам'яті, але дуже велика кількість "
-              L"ходів або захоплень може помітно навантажити пам'ять і "
-              L"сповільнити гру.\n\nПродовжити?",
-              w, h, cells);
-    if (MessageBoxW(dlg, msg, L"Велике поле",
+    wsprintfW(msg, Tr(kStrLargeBoard), w, h, cells);
+    if (MessageBoxW(dlg, msg, Tr(kStrLargeBoardTitle),
                     MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) {
       return false;
     }
@@ -331,7 +322,7 @@ INT_PTR CALLBACK DialogProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM lParam) {
       data = (DialogData*)lParam;
       SetWindowLongPtrW(dlg, DWLP_USER, (LONG_PTR)data);
       SetWindowTextW(dlg,
-                     data->network ? L"Створити мережеву гру" : L"Нова гра");
+                     data->network ? Tr(kStrHostTitle) : Tr(kStrNewGame));
       SendMessageW(dlg, WM_SETFONT, (WPARAM)data->font, FALSE);
       CreateControls(dlg, data);
       Layout(dlg, data, true);

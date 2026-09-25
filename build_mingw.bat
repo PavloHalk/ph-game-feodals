@@ -16,7 +16,7 @@ if errorlevel 1 exit /b 1
 
 g++ %CXXFLAGS% src\GameState.cpp src\Renderer.cpp src\InputHandler.cpp ^
  src\SaveManager.cpp src\UiCommon.cpp src\NewGameDialog.cpp src\main.cpp ^
- src\DialogKit.cpp src\NetDialogs.cpp src\NetGame.cpp src\Bot.cpp ^
+ src\DialogKit.cpp src\NetDialogs.cpp src\NetGame.cpp src\Bot.cpp src\Lang.cpp ^
  build\feodals_res.o -o build\Feodals.exe %LDFLAGS%
 if errorlevel 1 exit /b 1
 

@@ -17,7 +17,7 @@ HWND AddControl(HWND dlg, HFONT font, const wchar_t* cls, const wchar_t* text,
 void SizeDialog(HWND dlg, int clientWidth, int clientHeight, bool center);
 
 // Popup with the 8 palette colors (colors listed in `taken` are disabled)
-// and "Інший колір…". Returns true and updates `color` if one was chosen.
+// and "Other colour…". Returns true and updates `color` if one was chosen.
 // The dialog must forward WM_MEASUREITEM/WM_DRAWITEM to the handlers below.
 bool PickColor(HWND dlg, HWND anchor, uint32_t* color, const COLORREF* taken,
                int numTaken);

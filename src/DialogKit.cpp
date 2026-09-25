@@ -67,7 +67,7 @@ bool PickColor(HWND dlg, HWND anchor, uint32_t* color, const COLORREF* taken,
     AppendMenuW(menu, flags, 1 + k, (LPCWSTR)(ULONG_PTR)k);
   }
   AppendMenuW(menu, MF_SEPARATOR, 0, 0);
-  AppendMenuW(menu, MF_STRING, IDM_OTHER_COLOR, L"Інший колір…");
+  AppendMenuW(menu, MF_STRING, IDM_OTHER_COLOR, Tr(kStrOtherColor));
 
   RECT rc;
   GetWindowRect(anchor, &rc);
@@ -132,8 +132,8 @@ bool DrawColorMenuItem(DRAWITEMSTRUCT* dis, HFONT font) {
   }
 
   wchar_t text[64];
-  lstrcpyW(text, kPaletteNames[k]);
-  if (grayed) lstrcatW(text, L" (зайнятий)");
+  lstrcpyW(text, PaletteName(k));
+  if (grayed) lstrcatW(text, Tr(kStrColorTakenSuffix));
   HGDIOBJ oldFont = SelectObject(dc, font);
   SetBkMode(dc, TRANSPARENT);
   SetTextColor(dc, GetSysColor(grayed     ? COLOR_GRAYTEXT
@@ -189,9 +189,6 @@ void DrawSwatchListItem(DRAWITEMSTRUCT* dis, COLORREF color,
 
 bool CheckColorUsable(HWND dlg, COLORREF color, const wchar_t* title) {
   if (color != kEmptyCellColor) return true;
-  MessageBoxW(dlg,
-              L"Колір збігається з кольором порожніх клітинок.\n"
-              L"Оберіть інший колір.",
-              title, MB_OK | MB_ICONWARNING);
+  MessageBoxW(dlg, Tr(kStrColorIsEmpty), title, MB_OK | MB_ICONWARNING);
   return false;
 }

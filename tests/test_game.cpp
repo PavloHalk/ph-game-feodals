@@ -5,7 +5,9 @@
 
 #include "../src/Bot.h"
 #include "../src/GameState.h"
+#include "../src/Lang.h"
 #include "../src/SaveManager.h"
+#include "../src/UiCommon.h"
 
 static int g_failures = 0;
 static int g_checks = 0;
@@ -927,7 +929,87 @@ static void TestMediumOnBigBoards() {
   CHECK(ms < 10000);
 }
 
+// The printf conversions of a format string ("%s", "%02d", ...), in order,
+// written one after another into `out`; "%%" is not a conversion.
+static void Conversions(const wchar_t* text, wchar_t* out) {
+  *out = 0;
+  for (const wchar_t* p = text; *p; ++p) {
+    if (*p != L'%') continue;
+    if (p[1] == L'%') {
+      ++p;
+      continue;
+    }
+    const wchar_t* start = p++;
+    while (*p && wcschr(L"-+ #0123456789.hlI", *p)) ++p;
+    if (!*p) break;
+    int len = lstrlenW(out);
+    lstrcpynW(out + len, start, (int)(p - start) + 2);
+  }
+}
+
+// Every text exists in both languages, and a format string takes the same
+// arguments in the same order in both (otherwise wsprintf reads garbage).
+static void TestTranslations() {
+  int mismatched = 0;
+  for (int id = 0; id < kStringCount; ++id) {
+    const wchar_t* uk = Tr((StringId)id, kLangUkrainian);
+    const wchar_t* en = Tr((StringId)id, kLangEnglish);
+    CHECK(uk && uk[0] && en && en[0]);
+    wchar_t a[64], b[64];
+    Conversions(uk, a);
+    Conversions(en, b);
+    if (lstrcmpW(a, b) != 0) {
+      printf("  format mismatch in text #%d\n", id);
+      ++mismatched;
+    }
+  }
+  CHECK(mismatched == 0);
+  printf("  %d texts, both languages, formats match\n", (int)kStringCount);
+}
+
+// Number formatting, plural of "cells" and default names follow the language.
+static void TestLanguageHelpers() {
+  Language saved = CurrentLanguage();
+  wchar_t out[64], buffer[kMaxNameLen];
+
+  SetLanguage(kLangUkrainian);
+  FormatCount(1234567, out);
+  CHECK(lstrcmpW(out, L"1\x00A0" L"234\x00A0" L"567") == 0);
+  FormatPercent(123, 1000, out);
+  CHECK(lstrcmpW(out, L"12,3%") == 0);
+  CHECK(CellsWord(1) == Tr(kStrCellsOne) && CellsWord(21) == Tr(kStrCellsOne));
+  CHECK(CellsWord(2) == Tr(kStrCellsFew) && CellsWord(34) == Tr(kStrCellsFew));
+  CHECK(CellsWord(5) == Tr(kStrCellsMany) && CellsWord(11) == Tr(kStrCellsMany));
+  CHECK(CellsWord(12) == Tr(kStrCellsMany) && CellsWord(0) == Tr(kStrCellsMany));
+  // A default name made in English shows in Ukrainian, a real name as it is.
+  CHECK(lstrcmpW(DisplayName(L"Player 2", buffer), L"Гравець 2") == 0);
+  CHECK(lstrcmpW(DisplayName(L"Computer 4", buffer), L"Комп'ютер 4") == 0);
+  CHECK(lstrcmpW(DisplayName(L"Оксана", buffer), L"Оксана") == 0);
+
+  SetLanguage(kLangEnglish);
+  FormatCount(1234567, out);
+  CHECK(lstrcmpW(out, L"1,234,567") == 0);
+  FormatCount(999, out);
+  CHECK(lstrcmpW(out, L"999") == 0);
+  FormatPercent(123, 1000, out);
+  CHECK(lstrcmpW(out, L"12.3%") == 0);
+  CHECK(lstrcmpW(CellsWord(1), L"cell") == 0);
+  CHECK(lstrcmpW(CellsWord(2), L"cells") == 0);
+  CHECK(lstrcmpW(CellsWord(21), L"cells") == 0);
+  DefaultPlayerName(0, out);
+  CHECK(lstrcmpW(out, L"Player 1") == 0);
+  CHECK(lstrcmpW(DisplayName(L"Гравець 8", buffer), L"Player 8") == 0);
+  CHECK(lstrcmpW(DisplayName(L"Гравець 9", buffer), L"Гравець 9") == 0);
+  CHECK(lstrcmpW(BotLevelShortName(kBotHuman), L"") == 0);
+  CHECK(lstrcmpW(BotLevelShortName(kBotVeryStrong), L"very strong") == 0);
+  CHECK(lstrcmpW(PaletteName(0), L"Red") == 0);
+
+  SetLanguage(saved);
+}
+
 int main() {
+  TestTranslations();
+  TestLanguageHelpers();
   TestBasicMove();
   TestSpecExample();
   TestEdgeIsNotWall();

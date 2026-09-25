@@ -39,6 +39,7 @@ enum {
   IDM_NET_HOST_SAVED,
   IDM_NET_JOIN,
   IDM_NET_LEAVE,
+  IDM_LANGUAGE_FIRST = 150,  // + Language
 };
 
 const UINT WM_APP_START = WM_APP + 1;
@@ -48,9 +49,8 @@ const UINT_PTR kBotTimerId = 1;
 const UINT kBotDelayMs = 400;  // lets people see the computer's move
 const UINT WM_APP_BOT_MOVE = WM_APP + 30;  // lParam: finished BotJob*
 
-// Shown in "Про програму". Change only on request.
-const wchar_t kAppVersion[] = L"1.0.0";
-const wchar_t kAppAuthor[] = L"Павло Галковський";
+// Shown in "About". Change only on request.
+const wchar_t kAppVersion[] = L"1.1.0";
 
 const wchar_t kMainClass[] = L"FeodalsMainWindow";
 const wchar_t kBoardClass[] = L"FeodalsBoard";
@@ -127,7 +127,7 @@ void CancelBot() {
 
 void UpdateTitle() {
   wchar_t title[MAX_PATH + 96];
-  const wchar_t* name = L"Нова гра";
+  const wchar_t* name = Tr(kStrNewGame);
   if (g_app.filePath[0]) {
     name = g_app.filePath;
     for (const wchar_t* p = g_app.filePath; *p; ++p) {
@@ -136,11 +136,11 @@ void UpdateTitle() {
   }
   const wchar_t* network = L"";
   if (g_app.net.Role() == kNetHost) {
-    network = L" (мережева гра, сервер)";
+    network = Tr(kStrTitleHosting);
   } else if (g_app.net.Role() == kNetClient) {
-    name = L"Мережева гра";
+    name = Tr(kStrNetworkGame);
   } else if (g_app.viewOnly) {
-    name = L"Мережева гра (завершено)";
+    name = Tr(kStrTitleNetworkEnded);
   }
   wsprintfW(title, L"%s%s%s — %s", g_app.dirty ? L"*" : L"", name, network,
             kAppTitle);
@@ -287,34 +287,37 @@ void ShowResults() {
   int order[kMaxPlayers];
   int top = g.Ranking(order);
 
-  wchar_t text[2048], line[128], count[32];
-  lstrcpyW(text, L"Гру завершено — усі клітинки поля зафарбовано.\n\n");
+  wchar_t text[2048], line[128], count[32], name[kMaxNameLen];
+  lstrcpyW(text, Tr(kStrResultsIntro));
   FormatCount(g.CellCount(order[0]), count);
   if (top == 1) {
-    wsprintfW(line, L"Переможець: %s (%s %s)\n\n", g.Player(order[0]).name,
-              count, CellsWord(g.CellCount(order[0])));
+    wsprintfW(line, Tr(kStrResultsWinner),
+              DisplayName(g.Player(order[0]).name, name), count,
+              CellsWord(g.CellCount(order[0])));
     lstrcatW(text, line);
   } else {
-    lstrcatW(text, L"Нічия між гравцями: ");
+    lstrcatW(text, Tr(kStrResultsDraw));
     for (int i = 0; i < top; ++i) {
       if (i) lstrcatW(text, L", ");
-      lstrcatW(text, g.Player(order[i]).name);
+      lstrcatW(text, DisplayName(g.Player(order[i]).name, name));
     }
-    wsprintfW(line, L" (по %s %s)\n\n", count,
+    wsprintfW(line, Tr(kStrResultsDrawCount), count,
               CellsWord(g.CellCount(order[0])));
     lstrcatW(text, line);
   }
-  lstrcatW(text, L"Підсумок:\n");
+  lstrcatW(text, Tr(kStrResultsSummary));
   for (int i = 0; i < g.NumPlayers(); ++i) {
     int p = order[i];
     wchar_t percent[16];
     FormatCount(g.CellCount(p), count);
     FormatPercent(g.CellCount(p), g.TotalCells(), percent);
-    wsprintfW(line, L"%d. %s — %s %s (%s)\n", i + 1, g.Player(p).name, count,
+    wsprintfW(line, L"%d. %s — %s %s (%s)\n", i + 1,
+              DisplayName(g.Player(p).name, name), count,
               CellsWord(g.CellCount(p)), percent);
     lstrcatW(text, line);
   }
-  MessageBoxW(g_app.main, text, L"Кінець гри", MB_OK | MB_ICONINFORMATION);
+  MessageBoxW(g_app.main, text, Tr(kStrResultsTitle),
+              MB_OK | MB_ICONINFORMATION);
 }
 
 // Recomputes scroll bars after the board changed. With `center` the view
@@ -350,18 +353,14 @@ bool StartGame(const NewGameSettings& settings) {
 
 bool SaveCurrent(bool askPath) {
   if (g_app.net.Role() == kNetClient || g_app.viewOnly) {
-    MessageBoxW(g_app.main,
-                L"Зберегти мережеву гру може лише гравець, який її створив "
-                L"(сервер).",
-                kAppTitle, MB_OK | MB_ICONINFORMATION);
+    MessageBoxW(g_app.main, Tr(kStrOnlyHostSaves), kAppTitle,
+                MB_OK | MB_ICONINFORMATION);
     return false;
   }
   if (g_app.net.Role() == kNetHost && !g_app.net.IsStarted() &&
       !g_app.net.IsSavedGame()) {
-    MessageBoxW(g_app.main,
-                L"Гра ще не почалася: зберегти можна після приєднання всіх "
-                L"гравців.",
-                kAppTitle, MB_OK | MB_ICONINFORMATION);
+    MessageBoxW(g_app.main, Tr(kStrNotStartedSave), kAppTitle,
+                MB_OK | MB_ICONINFORMATION);
     return false;
   }
   wchar_t path[MAX_PATH];
@@ -371,7 +370,7 @@ bool SaveCurrent(bool askPath) {
   }
   SaveResult result = SaveGame(path, g_app.game);
   if (result != kSaveOk) {
-    MessageBoxW(g_app.main, SaveResultText(result), L"Помилка збереження",
+    MessageBoxW(g_app.main, SaveResultText(result), Tr(kStrSaveErrorTitle),
                 MB_OK | MB_ICONERROR);
     return false;
   }
@@ -384,9 +383,8 @@ bool SaveCurrent(bool askPath) {
 // Asks to save unsaved progress. Returns false if the user cancelled.
 bool ConfirmDiscard() {
   if (!g_app.dirty || g_app.net.Role() == kNetClient) return true;
-  int answer = MessageBoxW(g_app.main,
-                           L"Поточну гру не збережено. Зберегти її?",
-                           kAppTitle, MB_YESNOCANCEL | MB_ICONQUESTION);
+  int answer = MessageBoxW(g_app.main, Tr(kStrConfirmDiscard), kAppTitle,
+                           MB_YESNOCANCEL | MB_ICONQUESTION);
   if (answer == IDCANCEL) return false;
   if (answer == IDYES) return SaveCurrent(false);
   return true;
@@ -396,10 +394,8 @@ bool ConfirmDiscard() {
 bool ConfirmEndSession() {
   if (!ConfirmDiscard()) return false;
   if (!g_app.net.IsActive()) return true;
-  const wchar_t* text = g_app.net.Role() == kNetHost
-                            ? L"Мережеву гру буде завершено для всіх гравців. "
-                              L"Продовжити?"
-                            : L"Вийти з мережевої гри?";
+  const wchar_t* text = g_app.net.Role() == kNetHost ? Tr(kStrConfirmEndHost)
+                                                     : Tr(kStrConfirmLeave);
   if (MessageBoxW(g_app.main, text, kAppTitle,
                   MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) {
     return false;
@@ -425,7 +421,10 @@ void AfterGameLoaded(const wchar_t* path) {
   g_app.settings.height = g.Height();
   g_app.settings.numPlayers = g.NumPlayers();
   for (int i = 0; i < g.NumPlayers(); ++i) {
+    wchar_t name[kMaxNameLen];
     g_app.settings.players[i] = g.Player(i);
+    lstrcpyW(g_app.settings.players[i].name,
+             DisplayName(g.Player(i).name, name));
   }
   lstrcpyW(g_app.filePath, path);
   g_app.dirty = false;
@@ -441,7 +440,7 @@ void LoadFromFile() {
   CancelBot();
   SaveResult result = LoadGame(path, &g_app.game);
   if (result != kSaveOk) {
-    MessageBoxW(g_app.main, SaveResultText(result), L"Помилка завантаження",
+    MessageBoxW(g_app.main, SaveResultText(result), Tr(kStrLoadErrorTitle),
                 MB_OK | MB_ICONERROR);
     ScheduleBot();  // the old game goes on
     return;
@@ -459,13 +458,13 @@ void LoadFromFile() {
 void ShowNetError(const wchar_t* title, int error) {
   wchar_t text[256];
   if (error == WSAEADDRINUSE) {
-    lstrcpyW(text, L"Цей порт уже зайнятий іншою програмою. Оберіть інший.");
+    lstrcpyW(text, Tr(kStrNetErrPortInUse));
   } else if (error == WSAHOST_NOT_FOUND || error == WSANO_DATA) {
-    lstrcpyW(text, L"Не вдалося знайти комп'ютер за цією адресою.");
+    lstrcpyW(text, Tr(kStrNetErrHostNotFound));
   } else if (error == WSAEADDRNOTAVAIL || error == WSAEINVAL) {
-    lstrcpyW(text, L"Неправильна адреса або порт.");
+    lstrcpyW(text, Tr(kStrNetErrBadAddress));
   } else {
-    wsprintfW(text, L"Помилка мережі (код %d).", error);
+    wsprintfW(text, Tr(kStrNetErrCode), error);
   }
   MessageBoxW(g_app.main, text, title, MB_OK | MB_ICONERROR);
 }
@@ -485,7 +484,7 @@ void HostNetworkGame() {
                                     settings.height, settings.numPlayers,
                                     settings.players[0]);
   if (error) {
-    ShowNetError(L"Не вдалося створити гру", error);
+    ShowNetError(Tr(kStrNetCreateFailed), error);
     return;
   }
   g_app.settings = settings;
@@ -503,32 +502,33 @@ void HostSavedNetworkGame() {
   GameState loaded;
   SaveResult result = LoadGame(path, &loaded);
   if (result != kSaveOk) {
-    MessageBoxW(g_app.main, SaveResultText(result), L"Помилка завантаження",
+    MessageBoxW(g_app.main, SaveResultText(result), Tr(kStrLoadErrorTitle),
                 MB_OK | MB_ICONERROR);
     return;
   }
   if (loaded.IsGameOver()) {
-    MessageBoxW(g_app.main, L"Ця гра вже завершена.", kAppTitle,
+    MessageBoxW(g_app.main, Tr(kStrGameAlreadyOver), kAppTitle,
                 MB_OK | MB_ICONINFORMATION);
     return;
   }
 
   PlayerSetupRequest req;
   memset(&req, 0, sizeof(req));
-  req.title = L"Створити мережеву гру зі збереження";
-  req.okText = L"Створити";
-  req.info = L"Оберіть свого гравця. Решта гравців під час підключення "
-             L"оберуть серед інших кольорів.";
+  req.title = Tr(kStrHostSavedTitle);
+  req.okText = Tr(kStrCreate);
+  req.info = Tr(kStrHostSavedInfo);
   req.askPort = true;
   req.port = g_app.settings.port ? g_app.settings.port : kDefaultNetPort;
   req.chooseSlot = true;
   req.numSlots = loaded.NumPlayers();
   for (int i = 0; i < loaded.NumPlayers(); ++i) {
+    wchar_t name[kMaxNameLen];
     req.slots[i] = loaded.Player(i);
+    lstrcpyW(req.slots[i].name, DisplayName(loaded.Player(i).name, name));
     req.available[i] = true;
   }
   req.slot = 0;
-  req.player = loaded.Player(0);
+  req.player = req.slots[0];
   if (!ShowPlayerSetupDialog(g_app.main, &req)) return;
 
   CancelBot();
@@ -538,7 +538,7 @@ void HostSavedNetworkGame() {
   AfterGameLoaded(path);
   g_app.settings.port = req.port;
   if (error) {
-    ShowNetError(L"Не вдалося створити гру", error);
+    ShowNetError(Tr(kStrNetCreateFailed), error);
     return;
   }
   RefreshLocalAddresses();
@@ -554,7 +554,7 @@ void JoinNetworkGame() {
       g_app.net.Connect(&g_app.game, g_app.connect.address, g_app.connect.port);
   if (error) {
     ScheduleBot();  // the local game goes on
-    ShowNetError(L"Не вдалося підключитися", error);
+    ShowNetError(Tr(kStrNetConnectFailedTitle), error);
     return;
   }
   g_app.filePath[0] = 0;
@@ -570,23 +570,22 @@ void ShowJoinPrompt() {
 
   PlayerSetupRequest req;
   memset(&req, 0, sizeof(req));
-  req.title = L"Приєднання до гри";
-  req.okText = L"Приєднатися";
+  req.title = Tr(kStrJoinTitle);
+  req.okText = Tr(kStrJoin);
   wchar_t info[256], width[32], height[32];
   FormatCount(net.LobbyWidth(), width);
   FormatCount(net.LobbyHeight(), height);
   req.chooseSlot = net.IsSavedGame() || net.IsStarted();
-  wsprintfW(info, L"Поле %s × %s, гравців: %d.%s", width, height,
-            net.NumSlots(),
-            req.chooseSlot ? L"\nКольори гравців уже визначені: оберіть, за "
-                             L"кого гратимете."
-                           : L"");
+  wsprintfW(info, Tr(kStrJoinInfo), width, height, net.NumSlots(),
+            req.chooseSlot ? Tr(kStrJoinColorsSet) : L"");
   req.info = info;
   req.numSlots = net.NumSlots();
   int available = 0;
   for (int i = 0; i < net.NumSlots(); ++i) {
     const NetSlot& slot = net.Slot(i);
+    wchar_t name[kMaxNameLen];
     req.slots[i] = slot.info;
+    lstrcpyW(req.slots[i].name, DisplayName(slot.info.name, name));
     req.available[i] = slot.state == kSlotWaiting;
     available += req.available[i];
     if (slot.state != kSlotOpen) req.taken[req.numTaken++] = slot.info.color;
@@ -594,7 +593,7 @@ void ShowJoinPrompt() {
   if (req.chooseSlot && !available) {
     net.Close();
     g_app.viewOnly = false;
-    MessageBoxW(g_app.main, L"У цій грі вже немає вільних місць.", kAppTitle,
+    MessageBoxW(g_app.main, Tr(kStrGameFull), kAppTitle,
                 MB_OK | MB_ICONINFORMATION);
     UpdateTitle();
     RefreshAll();
@@ -603,7 +602,7 @@ void ShowJoinPrompt() {
   req.player = g_app.netPlayer;
   req.slot = -1;
   // An untouched default name follows the seat the player will most likely
-  // get, so it does not clash with "Гравець 1" of the host.
+  // get, so it does not clash with "Player 1" of the host.
   for (int k = 0; k < kMaxPlayers; ++k) {
     wchar_t name[kMaxNameLen];
     DefaultPlayerName(k, name);
@@ -633,17 +632,17 @@ void ShowJoinPrompt() {
 }
 
 void OnJoinRejected(int reason) {
-  const wchar_t* text = L"Сервер відхилив запит на приєднання.";
+  const wchar_t* text = Tr(kStrJoinRejected);
   bool retry = true;
   switch (reason) {
     case kJoinColorTaken:
-      text = L"Цей колір щойно зайняв інший гравець. Оберіть інший.";
+      text = Tr(kStrJoinColorTaken);
       break;
     case kJoinSlotTaken:
-      text = L"За цього гравця вже грає хтось інший. Оберіть іншого.";
+      text = Tr(kStrJoinSlotTaken);
       break;
     case kJoinGameFull:
-      text = L"У цій грі вже немає вільних місць.";
+      text = Tr(kStrGameFull);
       retry = false;
       break;
   }
@@ -661,20 +660,19 @@ void OnNetClosed(int reason) {
   const wchar_t* text = 0;
   switch (reason) {
     case kCloseConnectFailed:
-      text = L"Не вдалося підключитися до гри. Перевірте адресу, порт і те, що "
-             L"гру створено (а брандмауер Windows дозволяє з'єднання).";
+      text = Tr(kStrNetConnectFailed);
       break;
     case kCloseConnectionLost:
-      text = L"З'єднання з сервером гри втрачено.";
+      text = Tr(kStrNetConnectionLost);
       break;
     case kCloseServerStopped:
-      text = L"Сервер завершив мережеву гру.";
+      text = Tr(kStrNetServerStopped);
       break;
     case kCloseVersionMismatch:
-      text = L"Версія гри на сервері відрізняється від вашої.";
+      text = Tr(kStrNetVersionMismatch);
       break;
     default:
-      text = L"Помилка обміну даними з сервером. Гру завершено.";
+      text = Tr(kStrNetProtocolError);
       break;
   }
   g_app.viewOnly = g_app.game.Width() != 0 && reason != kCloseConnectFailed;
@@ -727,26 +725,12 @@ void OnNetEvent(WPARAM event, LPARAM detail) {
 }
 
 void ShowRules() {
-  MessageBoxW(
-      g_app.main,
-      L"Гравці ходять по черзі. Хід — клік лівою кнопкою миші по нічиїй "
-      L"клітинці: вона фарбується у ваш колір.\n\n"
-      L"Захоплення оточенням: якщо ваші клітинки повністю оточують область "
-      L"(нічиї та/або чужі клітинки), уся вона переходить до вас.\n"
-      L"• Як у «Крапках» на папері, клітинки, що торкаються лише кутами, "
-      L"теж утворюють суцільну стіну.\n"
-      L"• Край поля не є стіною: область, що торкається краю, не "
-      L"захоплюється.\n\n"
-      L"Гра закінчується, коли всі клітинки зафарбовано. Перемагає гравець "
-      L"з найбільшою кількістю клітинок.\n\n"
-      L"Керування полем:\n"
-      L"• колесо миші — вертикальна прокрутка, Shift+колесо — горизонтальна;\n"
-      L"• права кнопка миші (затиснути й тягнути) — перетягування поля;\n"
-      L"• стрілки, PageUp/PageDown, Home/End — прокрутка клавіатурою.",
-      L"Правила гри", MB_OK | MB_ICONINFORMATION);
+  MessageBoxW(g_app.main, Tr(kStrRules), Tr(kStrRulesTitle),
+              MB_OK | MB_ICONINFORMATION);
 }
 
-// Build date from __DATE__ ("Sep 17 2026") as "17.09.2026".
+// Build date from __DATE__ ("Sep 17 2026") as "17.09.2026" in Ukrainian and
+// "17 Sep 2026" in English (the month spelled out, so it cannot be misread).
 void FormatBuildDate(wchar_t* out) {
   static const char kMonths[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
   const char* date = __DATE__;
@@ -755,21 +739,19 @@ void FormatBuildDate(wchar_t* out) {
     if (memcmp(date, kMonths + 3 * i, 3) == 0) month = i + 1;
   }
   int day = (date[4] == ' ' ? 0 : date[4] - '0') * 10 + (date[5] - '0');
-  wsprintfW(out, L"%02d.%02d.%hs", day, month, date + 7);
+  if (CurrentLanguage() == kLangEnglish) {
+    char name[4] = {date[0], date[1], date[2], 0};
+    wsprintfW(out, L"%d %hs %hs", day, name, date + 7);
+  } else {
+    wsprintfW(out, L"%02d.%02d.%hs", day, month, date + 7);
+  }
 }
 
 void ShowAbout() {
   wchar_t date[16], text[512];
   FormatBuildDate(date);
-  wsprintfW(text,
-            L"Feodals %s\n"
-            L"Дата збірки: %s\n"
-            L"Автор: %s\n\n"
-            L"Покрокова гра на захоплення території для 2–8 гравців на "
-            L"одному комп'ютері або по локальній мережі.\n"
-            L"C++ і чистий Win32 API, без сторонніх бібліотек.",
-            kAppVersion, date, kAppAuthor);
-  MessageBoxW(g_app.main, text, L"Про програму", MB_OK | MB_ICONINFORMATION);
+  wsprintfW(text, Tr(kStrAbout), kAppVersion, date, Tr(kStrAuthor));
+  MessageBoxW(g_app.main, text, Tr(kStrAboutTitle), MB_OK | MB_ICONINFORMATION);
 }
 
 // ---- Board window -----------------------------------------------------------
@@ -1020,10 +1002,10 @@ void PaintPanel(HWND hwnd) {
   int y = 12;
   SelectObject(dc, g_app.titleFont);
   SetTextColor(dc, text);
-  const wchar_t* title = over      ? L"Гру завершено"
-                         : lobby   ? L"Очікування гравців"
-                         : paused  ? L"Пауза"
-                                   : L"Гравці";
+  const wchar_t* title = over      ? Tr(kStrPanelGameOver)
+                         : lobby   ? Tr(kStrPanelWaiting)
+                         : paused  ? Tr(kStrPanelPaused)
+                                   : Tr(kStrPanelPlayers);
   DrawTextAt(dc, title, 14, y, w - 10, y + 24, DT_LEFT);
   y += 32;
 
@@ -1063,21 +1045,24 @@ void PaintPanel(HWND hwnd) {
     SelectObject(dc, active ? g_app.boldFont : g_app.font);
     SetTextColor(dc, active ? RGB(0, 0, 0) : open ? dim : text);
     if (open) {
-      lstrcpyW(buf, L"Вільне місце");
+      lstrcpyW(buf, Tr(kStrFreeSeat));
     } else {
-      wsprintfW(buf, L"%s%s%s", active && !over ? L"\x25BA " : L"", p.name,
-                net.IsActive() && i == net.LocalSlot() ? L" (ви)" : L"");
+      wchar_t name[kMaxNameLen];
+      wsprintfW(buf, L"%s%s%s", active && !over ? L"\x25BA " : L"",
+                DisplayName(p.name, name),
+                net.IsActive() && i == net.LocalSlot() ? Tr(kStrYouSuffix)
+                                                       : L"");
     }
     DrawTextAt(dc, buf, row.left + 42, y + 4, row.right - 6, y + 22, DT_LEFT);
 
     SelectObject(dc, g_app.font);
     if (net.IsActive() && state == kSlotWaiting) {
       SetTextColor(dc, RGB(190, 60, 30));
-      lstrcpyW(buf, net.IsStarted() ? L"від'єднався, очікуємо…"
-                                    : L"очікуємо на гравця…");
+      lstrcpyW(buf, net.IsStarted() ? Tr(kStrDisconnectedWaiting)
+                                    : Tr(kStrWaitingForPlayer));
     } else if (lobby) {
       SetTextColor(dc, dim);
-      lstrcpyW(buf, open ? L"очікуємо на гравця…" : L"приєднався");
+      lstrcpyW(buf, open ? Tr(kStrWaitingForPlayer) : Tr(kStrJoined));
     } else {
       SetTextColor(dc, dim);
       FormatCount(g.CellCount(i), count);
@@ -1085,7 +1070,7 @@ void PaintPanel(HWND hwnd) {
       wsprintfW(buf, L"%s %s · %s", count, CellsWord(g.CellCount(i)), percent);
       if (!net.IsActive() && p.botLevel && p.botLevel < kBotLevelCount) {
         lstrcatW(buf, L" · ");  // computer player: its level
-        lstrcatW(buf, kBotLevelShortNames[p.botLevel]);
+        lstrcatW(buf, BotLevelShortName(p.botLevel));
       }
     }
     DrawTextAt(dc, buf, row.left + 42, y + 21, row.right - 6, y + 39, DT_LEFT);
@@ -1102,16 +1087,16 @@ void PaintPanel(HWND hwnd) {
   wchar_t width[32], height[32];
   FormatCount(g.Width(), width);
   FormatCount(g.Height(), height);
-  wsprintfW(buf, L"Поле: %s × %s", width, height);
+  wsprintfW(buf, Tr(kStrPanelBoard), width, height);
   DrawTextAt(dc, buf, 14, y, w - 10, y + 18, DT_LEFT);
   y += 20;
   FormatCount(g.FilledCells(), count);
   FormatPercent(g.FilledCells(), g.TotalCells(), percent);
-  wsprintfW(buf, L"Зафарбовано: %s (%s)", count, percent);
+  wsprintfW(buf, Tr(kStrPanelClaimed), count, percent);
   DrawTextAt(dc, buf, 14, y, w - 10, y + 18, DT_LEFT);
   y += 20;
   FormatCount(g.TotalCells() - g.FilledCells(), count);
-  wsprintfW(buf, L"Вільних: %s", count);
+  wsprintfW(buf, Tr(kStrPanelFree), count);
   DrawTextAt(dc, buf, 14, y, w - 10, y + 18, DT_LEFT);
   y += 28;
 
@@ -1123,11 +1108,11 @@ void PaintPanel(HWND hwnd) {
     SelectObject(dc, g_app.boldFont);
     SetTextColor(dc, text);
     if (net.Role() == kNetHost) {
-      wsprintfW(buf, L"Мережева гра · сервер, порт %u", net.Port());
+      wsprintfW(buf, Tr(kStrPanelHostPort), net.Port());
     } else if (net.Role() == kNetClient) {
-      lstrcpyW(buf, L"Мережева гра · клієнт");
+      lstrcpyW(buf, Tr(kStrPanelClient));
     } else {
-      lstrcpyW(buf, L"Мережеву гру завершено");
+      lstrcpyW(buf, Tr(kStrPanelNetEnded));
     }
     DrawTextAt(dc, buf, 14, y, w - 10, y + 18, DT_LEFT);
     y += 20;
@@ -1140,14 +1125,14 @@ void PaintPanel(HWND hwnd) {
     }
     buf[0] = 0;
     if (net.IsConnecting()) {
-      lstrcpyW(buf, L"Підключення…");
+      lstrcpyW(buf, Tr(kStrConnecting));
     } else if (net.Role() == kNetClient && !net.IsJoined()) {
-      lstrcpyW(buf, L"Вибір гравця…");
+      lstrcpyW(buf, Tr(kStrChoosingPlayer));
     } else if (lobby) {
-      wsprintfW(buf, L"Приєдналося: %d з %d", net.ConnectedSlots(),
+      wsprintfW(buf, Tr(kStrJoinedCount), net.ConnectedSlots(),
                 net.NumSlots());
     } else if (paused) {
-      lstrcpyW(buf, L"Гру призупинено: очікуємо гравців");
+      lstrcpyW(buf, Tr(kStrPausedWaiting));
     }
     if (buf[0]) {
       SetTextColor(dc, dim);
@@ -1163,20 +1148,18 @@ void PaintPanel(HWND hwnd) {
     SetTextColor(dc, text);
     if (net.IsActive() && net.CanLocalPlayerMove()) {
       SetTextColor(dc, RGB(0, 130, 40));
-      lstrcpyW(buf, L"Ваш хід!");
+      lstrcpyW(buf, Tr(kStrYourTurn));
     } else {
-      wsprintfW(buf, IsBotTurn() ? L"Хід: %s (думає…)" : L"Хід: %s",
-                g.Player(g.CurrentPlayer()).name);
+      wchar_t name[kMaxNameLen];
+      wsprintfW(buf, IsBotTurn() ? Tr(kStrTurnThinking) : Tr(kStrTurn),
+                DisplayName(g.Player(g.CurrentPlayer()).name, name));
     }
     DrawTextAt(dc, buf, 14, y, w - 10, y + 18, DT_LEFT);
   }
 
   // Controls hint pinned to the bottom when there is room for it.
-  static const wchar_t* const kHints[] = {
-      L"ЛКМ — зайняти клітинку",
-      L"ПКМ + тягнути — рухати поле",
-      L"Колесо / Shift+колесо — прокрутка",
-  };
+  static const StringId kHints[] = {kStrHintClick, kStrHintDrag,
+                                    kStrHintWheel};
   int hintsTop = h - 12 - 3 * 18;
   // The "last move" checkbox sits right above the hints; the hints give way
   // first when the panel is too short.
@@ -1194,7 +1177,7 @@ void PaintPanel(HWND hwnd) {
     SelectObject(dc, g_app.font);
     SetTextColor(dc, dim);
     for (int i = 0; i < 3; ++i) {
-      DrawTextAt(dc, kHints[i], 14, hintsTop + i * 18, w - 10,
+      DrawTextAt(dc, Tr(kHints[i]), 14, hintsTop + i * 18, w - 10,
                  hintsTop + i * 18 + 18, DT_LEFT);
     }
   }
@@ -1237,31 +1220,80 @@ LRESULT CALLBACK PanelProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 HMENU BuildMenu() {
   HMENU game = CreatePopupMenu();
-  AppendMenuW(game, MF_STRING, IDM_NEW, L"&Нова гра…\tCtrl+N");
+  AppendMenuW(game, MF_STRING, IDM_NEW, Tr(kStrMenuNew));
   AppendMenuW(game, MF_SEPARATOR, 0, 0);
-  AppendMenuW(game, MF_STRING, IDM_SAVE, L"&Зберегти\tCtrl+S");
-  AppendMenuW(game, MF_STRING, IDM_SAVE_AS, L"Зберегти &як…\tCtrl+Shift+S");
-  AppendMenuW(game, MF_STRING, IDM_LOAD, L"З&авантажити…\tCtrl+O");
+  AppendMenuW(game, MF_STRING, IDM_SAVE, Tr(kStrMenuSave));
+  AppendMenuW(game, MF_STRING, IDM_SAVE_AS, Tr(kStrMenuSaveAs));
+  AppendMenuW(game, MF_STRING, IDM_LOAD, Tr(kStrMenuLoad));
   AppendMenuW(game, MF_SEPARATOR, 0, 0);
-  AppendMenuW(game, MF_STRING, IDM_EXIT, L"&Вихід\tAlt+F4");
+  AppendMenuW(game, MF_STRING, IDM_EXIT, Tr(kStrMenuExit));
 
   HMENU network = CreatePopupMenu();
-  AppendMenuW(network, MF_STRING, IDM_NET_HOST, L"&Створити мережеву гру…");
-  AppendMenuW(network, MF_STRING, IDM_NET_HOST_SAVED,
-              L"Створити мережеву гру зі &збереження…");
-  AppendMenuW(network, MF_STRING, IDM_NET_JOIN, L"&Приєднатися до гри…");
+  AppendMenuW(network, MF_STRING, IDM_NET_HOST, Tr(kStrMenuNetHost));
+  AppendMenuW(network, MF_STRING, IDM_NET_HOST_SAVED, Tr(kStrMenuNetHostSaved));
+  AppendMenuW(network, MF_STRING, IDM_NET_JOIN, Tr(kStrMenuNetJoin));
   AppendMenuW(network, MF_SEPARATOR, 0, 0);
-  AppendMenuW(network, MF_STRING, IDM_NET_LEAVE, L"&Вийти з мережевої гри");
+  AppendMenuW(network, MF_STRING, IDM_NET_LEAVE, Tr(kStrMenuNetLeave));
+
+  // Each language under its own name, so it can be found from any other.
+  HMENU language = CreatePopupMenu();
+  for (int i = 0; i < kLangCount; ++i) {
+    AppendMenuW(language, MF_STRING, IDM_LANGUAGE_FIRST + i,
+                Tr(kStrLanguageSelf, (Language)i));
+  }
+  CheckMenuRadioItem(language, IDM_LANGUAGE_FIRST,
+                     IDM_LANGUAGE_FIRST + kLangCount - 1,
+                     IDM_LANGUAGE_FIRST + CurrentLanguage(), MF_BYCOMMAND);
 
   HMENU help = CreatePopupMenu();
-  AppendMenuW(help, MF_STRING, IDM_RULES, L"&Правила гри\tF1");
-  AppendMenuW(help, MF_STRING, IDM_ABOUT, L"Про &програму");
+  AppendMenuW(help, MF_STRING, IDM_RULES, Tr(kStrMenuRules));
+  AppendMenuW(help, MF_STRING, IDM_ABOUT, Tr(kStrMenuAbout));
 
   HMENU bar = CreateMenu();
-  AppendMenuW(bar, MF_POPUP, (UINT_PTR)game, L"&Гра");
-  AppendMenuW(bar, MF_POPUP, (UINT_PTR)network, L"&Мережа");
-  AppendMenuW(bar, MF_POPUP, (UINT_PTR)help, L"&Довідка");
+  AppendMenuW(bar, MF_POPUP, (UINT_PTR)game, Tr(kStrMenuGame));
+  AppendMenuW(bar, MF_POPUP, (UINT_PTR)network, Tr(kStrMenuNetwork));
+  AppendMenuW(bar, MF_POPUP, (UINT_PTR)language, Tr(kStrMenuLanguage));
+  AppendMenuW(bar, MF_POPUP, (UINT_PTR)help, Tr(kStrMenuHelp));
   return bar;
+}
+
+// Names the player never touched follow the language: "Гравець 2" becomes
+// "Player 2" in what the dialogs offer next. (The game on the board keeps
+// its names; DisplayName shows the default ones in the current language.)
+void TranslateDefaultName(wchar_t* name, int index, Language from,
+                          Language to) {
+  wchar_t old[kMaxNameLen];
+  DefaultPlayerName(index, old, from);
+  if (lstrcmpW(name, old) == 0) {
+    DefaultPlayerName(index, name, to);
+    return;
+  }
+  DefaultBotName(index, old, from);
+  if (lstrcmpW(name, old) == 0) DefaultBotName(index, name, to);
+}
+
+// The «Мова» menu: everything on screen switches at once, and the choice is
+// remembered for the next start.
+void ApplyLanguage(Language language) {
+  Language old = CurrentLanguage();
+  if (language == old) return;
+  SetLanguage(language);
+  SaveLanguageSetting(language);
+  for (int i = 0; i < kMaxPlayers; ++i) {
+    TranslateDefaultName(g_app.settings.players[i].name, i, old, language);
+  }
+  for (int i = 0; i < kMaxPlayers; ++i) {  // any seat's default name
+    wchar_t before[kMaxNameLen];
+    lstrcpyW(before, g_app.netPlayer.name);
+    TranslateDefaultName(g_app.netPlayer.name, i, old, language);
+    if (lstrcmpW(before, g_app.netPlayer.name) != 0) break;
+  }
+  HMENU oldMenu = GetMenu(g_app.main);
+  SetMenu(g_app.main, BuildMenu());
+  if (oldMenu) DestroyMenu(oldMenu);
+  SetWindowTextW(g_app.lastMoveCheck, Tr(kStrShowLastMove));
+  UpdateTitle();
+  RefreshAll();
 }
 
 LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -1276,10 +1308,12 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                                     WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, 0,
                                     0, 0, 0, hwnd, 0, g_app.instance, 0);
       g_app.lastMoveCheck = CreateWindowExW(
-          0, L"BUTTON", L"Показувати останній хід",
+          0, L"BUTTON", Tr(kStrShowLastMove),
           WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, 14, 0, 200, 22,
           g_app.panel, (HMENU)(INT_PTR)kLastMoveCheckId, g_app.instance, 0);
       SendMessageW(g_app.lastMoveCheck, WM_SETFONT, (WPARAM)g_app.font, FALSE);
+      SendMessageW(g_app.lastMoveCheck, BM_SETCHECK,
+                   g_app.showLastMove ? BST_CHECKED : BST_UNCHECKED, 0);
       return 0;
     case WM_SIZE: {
       int w = LOWORD(lParam), h = HIWORD(lParam);
@@ -1301,6 +1335,11 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_MOUSEHWHEEL:
       return SendMessageW(g_app.board, msg, wParam, lParam);
     case WM_COMMAND:
+      if (LOWORD(wParam) >= IDM_LANGUAGE_FIRST &&
+          LOWORD(wParam) < IDM_LANGUAGE_FIRST + kLangCount) {
+        ApplyLanguage((Language)(LOWORD(wParam) - IDM_LANGUAGE_FIRST));
+        return 0;
+      }
       switch (LOWORD(wParam)) {
         case IDM_NEW: NewGame(); break;
         case IDM_SAVE: SaveCurrent(false); break;
@@ -1386,6 +1425,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int showCmd) {
   InitCommonControls();  // loads comctl32 so the v6 manifest styles apply
 
   g_app.instance = instance;
+  SetLanguage(LoadLanguageSetting());  // before any default name is made
+  g_app.showLastMove = true;
   g_app.bot.Seed(GetTickCount());
   g_app.font = CreateUiFont(false);
   g_app.boldFont = CreateUiFont(true);

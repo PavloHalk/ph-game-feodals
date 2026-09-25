@@ -2,6 +2,8 @@
 
 #include <commdlg.h>
 
+#include "Lang.h"
+
 namespace {
 
 const char kMagic[4] = {'F', 'E', 'O', 'D'};
@@ -15,8 +17,19 @@ void MakeDefaultSaveName(wchar_t* buffer) {
             t.wDay, t.wHour, t.wMinute);
 }
 
-const wchar_t kFileFilter[] =
-    L"Збереження Feodals (*.feo)\0*.feo\0Усі файли (*.*)\0*.*\0";
+// "Feodals saves (*.feo)\0*.feo\0All files (*.*)\0*.*\0" in the current
+// language (the list ends with an empty string).
+void MakeFileFilter(wchar_t* out) {
+  const wchar_t* parts[] = {Tr(kStrFilterSaves), L"*.feo", Tr(kStrFilterAll),
+                            L"*.*"};
+  for (int i = 0; i < 4; ++i) {
+    lstrcpyW(out, parts[i]);
+    out += lstrlenW(out) + 1;
+  }
+  *out = 0;
+}
+
+const int kFilterSize = 128;
 
 }  // namespace
 
@@ -188,15 +201,15 @@ SaveResult LoadGame(const wchar_t* path, GameState* game) {
 
 const wchar_t* SaveResultText(SaveResult result) {
   switch (result) {
-    case kSaveOk: return L"Готово.";
-    case kSaveErrOpen: return L"Не вдалося відкрити файл.";
-    case kSaveErrWrite: return L"Не вдалося записати файл.";
-    case kSaveErrRead: return L"Помилка читання файлу.";
-    case kSaveErrFormat: return L"Файл пошкоджено або це не збереження Feodals.";
-    case kSaveErrVersion: return L"Непідтримувана версія формату збереження.";
-    case kSaveErrMemory: return L"Недостатньо пам'яті для завантаження гри.";
+    case kSaveOk: return Tr(kStrSaveOk);
+    case kSaveErrOpen: return Tr(kStrSaveErrOpen);
+    case kSaveErrWrite: return Tr(kStrSaveErrWrite);
+    case kSaveErrRead: return Tr(kStrSaveErrRead);
+    case kSaveErrFormat: return Tr(kStrSaveErrFormat);
+    case kSaveErrVersion: return Tr(kStrSaveErrVersion);
+    case kSaveErrMemory: return Tr(kStrSaveErrMemory);
   }
-  return L"Невідома помилка.";
+  return Tr(kStrSaveErrUnknown);
 }
 
 bool GetSavesDir(wchar_t* buffer, bool create) {
@@ -210,15 +223,16 @@ bool GetSavesDir(wchar_t* buffer, bool create) {
 }
 
 bool PromptSavePath(HWND owner, wchar_t* path) {
-  wchar_t dir[MAX_PATH] = L"";
+  wchar_t dir[MAX_PATH] = L"", filter[kFilterSize];
   GetSavesDir(dir, true);
   if (!path[0]) MakeDefaultSaveName(path);
+  MakeFileFilter(filter);
 
   OPENFILENAMEW ofn;
   memset(&ofn, 0, sizeof(ofn));
   ofn.lStructSize = sizeof(ofn);
   ofn.hwndOwner = owner;
-  ofn.lpstrFilter = kFileFilter;
+  ofn.lpstrFilter = filter;
   ofn.lpstrFile = path;
   ofn.nMaxFile = MAX_PATH;
   ofn.lpstrInitialDir = dir;
@@ -229,15 +243,16 @@ bool PromptSavePath(HWND owner, wchar_t* path) {
 }
 
 bool PromptLoadPath(HWND owner, wchar_t* path) {
-  wchar_t dir[MAX_PATH] = L"";
+  wchar_t dir[MAX_PATH] = L"", filter[kFilterSize];
   GetSavesDir(dir, false);
   path[0] = 0;
+  MakeFileFilter(filter);
 
   OPENFILENAMEW ofn;
   memset(&ofn, 0, sizeof(ofn));
   ofn.lStructSize = sizeof(ofn);
   ofn.hwndOwner = owner;
-  ofn.lpstrFilter = kFileFilter;
+  ofn.lpstrFilter = filter;
   ofn.lpstrFile = path;
   ofn.nMaxFile = MAX_PATH;
   ofn.lpstrInitialDir = dir;

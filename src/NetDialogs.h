@@ -10,7 +10,7 @@ struct ConnectSettings {
   uint16_t port;
 };
 
-// "Приєднатися до гри": host address and port.
+// "Join a network game": host address and port.
 bool ShowConnectDialog(HWND owner, ConnectSettings* settings);
 
 struct PlayerSetupRequest {

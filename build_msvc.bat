@@ -36,7 +36,7 @@ if errorlevel 1 exit /b 1
 cl %CFLAGS% /Fobuild\msvc\ /Febuild\Feodals_msvc.exe ^
  src\GameState.cpp src\Renderer.cpp src\InputHandler.cpp src\SaveManager.cpp ^
  src\UiCommon.cpp src\NewGameDialog.cpp src\main.cpp src\DialogKit.cpp ^
- src\NetDialogs.cpp src\NetGame.cpp src\Bot.cpp build\msvc\feodals.res ^
+ src\NetDialogs.cpp src\NetGame.cpp src\Bot.cpp src\Lang.cpp build\msvc\feodals.res ^
  /link %LFLAGS% user32.lib gdi32.lib comdlg32.lib comctl32.lib ws2_32.lib kernel32.lib
 if errorlevel 1 exit /b 1
 
